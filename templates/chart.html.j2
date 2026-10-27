@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  :root{--bg:#131722;--panel:#1b1f2b;--line:#2a2e39;--text:#e1e3ea;--muted:#8b8fa0;
+        --up:#26a69a;--down:#ef5350;--buy:#2962ff;--sell:#ff9800;--good:#26a69a;--mid:#f0a73a;--bad:#ef5350}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);width:1600px;
+       font-family:"PingFang SC","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif}
+  .head{display:flex;justify-content:space-between;align-items:baseline;padding:22px 28px 12px}
+  .head h1{margin:0;font-size:28px;font-weight:600}
+  .head .sub{color:var(--muted);font-size:17px;margin-left:14px;font-weight:400}
+  .head .pnl{font-size:18px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .head .pnl b{font-size:24px;margin-left:6px}
+  .up{color:var(--up)} .down{color:var(--down)}
+  #wrap{position:relative;width:1600px;height:{{ height }}px}
+  #chart{position:absolute;inset:0}
+  #ov{position:absolute;left:0;top:0;pointer-events:none;z-index:20}
+  #ov svg{position:absolute;left:0;top:0;overflow:visible}
+  .lab{position:absolute;background:rgba(27,31,43,.96);border:1px solid var(--line);border-left:4px solid var(--buy);
+       border-radius:6px;padding:6px 10px 7px;font-size:15px;line-height:1.45;white-space:nowrap;
+       box-shadow:0 2px 10px rgba(0,0,0,.35)}
+  .lab .l1{color:var(--text);font-variant-numeric:tabular-nums}
+  .lab .l1 b{font-size:17px;margin-right:4px}
+  .lab .l2{margin-top:2px;font-size:15px}
+  .v{display:inline-block;border-radius:4px;padding:0 6px;margin-right:6px;font-size:13px;font-weight:600}
+  .v.good{background:rgba(38,166,154,.2);color:var(--good)}
+  .v.mid{background:rgba(240,167,58,.2);color:var(--mid)}
+  .v.bad{background:rgba(239,83,80,.2);color:var(--bad)}
+  .list{padding:16px 28px 26px;font-size:18px;line-height:1.7}
+  .item{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+  .item .num{font-size:22px;line-height:1.5;flex:none;width:30px}
+  .item .meta{color:var(--muted);font-variant-numeric:tabular-nums}
+  .item .meta strong{color:var(--text);font-weight:600;margin-right:8px}
+</style></head>
+<body>
+<div class="head">
+  <h1>{{ symbol }} 5分钟<span class="sub">{{ date_label }} · 美股盘中 09:30–16:00 ET</span></h1>
+  <div class="pnl">{% for p in trade_pnls %}第{{ p.n }}笔 <span class="{{ 'up' if p.usd > 0 else 'down' }}">{{ "%+.2f"|format(p.usd) }}</span>　{% endfor %}合计<b class="{{ 'up' if total > 0 else 'down' }}">{{ "%+.2f"|format(total) }}</b></div>
+</div>
+<div id="wrap"><div id="chart"></div><div id="ov"><svg id="svg"></svg></div></div>
+
+{% if items %}
+<div class="list">
+  {% for it in items %}
+  <div class="item">
+    <div class="num">{{ it.label }}</div>
+    <div>
+      <div class="meta"><strong>{{ it.time }} {{ it.title }}</strong>{{ it.action }}{% if it.verdict %}　<span class="v {{ it.vclass }}">{{ it.verdict }}</span>{% endif %}</div>
+      {% if it.comment %}<div>{{ it.comment }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script src="{{ lib_uri }}"></script>
+<script>
+const BARS = {{ bars_json|safe }};
+const LEVELS = {{ levels_json|safe }};
+const SCALE_EXTRA = {{ scale_extra_json|safe }};
+const EVENTS = {{ events_json|safe }};
+const W = 1600, H = {{ height }};
+const C = {bg:'#131722', grid:'#1e222d', text:'#d1d4dc', border:'#2a2e39', up:'#26a69a', down:'#ef5350',
+           buy:'#2962ff', sell:'#ff9800', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350'};
+const LC = LightweightCharts;
+
+const chart = LC.createChart(document.getElementById('chart'), {
+  width: W, height: H,
+  layout: {background: {color: C.bg}, textColor: C.text, fontSize: 14},
+  grid: {vertLines: {color: C.grid}, horzLines: {color: C.grid}},
+  timeScale: {timeVisible: true, secondsVisible: false, borderColor: C.border, rightOffset: 3},
+  rightPriceScale: {borderColor: C.border, scaleMargins: {top: 0.17, bottom: 0.17}},
+  crosshair: {vertLine: {visible: false}, horzLine: {visible: false}},
+});
+const series = chart.addSeries(LC.CandlestickSeries, {
+  upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down,
+  lastValueVisible: false, priceLineVisible: false,
+  autoscaleInfoProvider: (orig) => {
+    const r = orig();
+    if (!r) return r;
+    for (const p of SCALE_EXTRA) {
+      r.priceRange.minValue = Math.min(r.priceRange.minValue, p);
+      r.priceRange.maxValue = Math.max(r.priceRange.maxValue, p);
+    }
+    return r;
+  },
+});
+series.setData(BARS);
+for (const l of LEVELS) {
+  series.createPriceLine({price: l.price, color: l.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: l.name});
+}
+chart.timeScale().fitContent();
+
+function layout() {
+  const paneW = W - chart.priceScale('right').width();
+  const paneH = H - chart.timeScale().height();
+  const ov = document.getElementById('ov');
+  const svg = document.getElementById('svg');
+  ov.style.width = paneW + 'px'; ov.style.height = paneH + 'px';
+  svg.setAttribute('width', paneW); svg.setAttribute('height', paneH);
+  const NS = 'http://www.w3.org/2000/svg';
+  const defs = document.createElementNS(NS, 'defs');
+  svg.appendChild(defs);
+
+  const placed = [];   // labels + fill points
+  const hit = (r) => placed.some(p => !(r.x + r.w + 6 < p.x || p.x + p.w + 6 < r.x || r.y + r.h + 6 < p.y || p.y + p.h + 6 < r.y));
+
+  const anchors = EVENTS.map(e => ({e, x: chart.timeScale().timeToCoordinate(e.bar_time), y: series.priceToCoordinate(e.price)}));
+  for (const a of anchors) placed.push({x: a.x - 8, y: a.y - 8, w: 16, h: 16});
+  const candles = BARS.map(b => ({x: chart.timeScale().timeToCoordinate(b.time),
+                                  yh: series.priceToCoordinate(b.high), yl: series.priceToCoordinate(b.low)}))
+                      .filter(c => c.x !== null && c.yh !== null && c.yl !== null);
+  // highest / lowest candle pixel inside a horizontal span, so a label clears every candle under it
+  const spanTop = (x0, x1) => Math.min(...candles.filter(c => c.x >= x0 && c.x <= x1).map(c => c.yh), Infinity);
+  const spanBot = (x0, x1) => Math.max(...candles.filter(c => c.x >= x0 && c.x <= x1).map(c => c.yl), -Infinity);
+  // labels on each side are laid out left-to-right in time order, so they read in number order
+  const lastRight = {'-1': -Infinity, '1': -Infinity};
+
+  function placeLabel(a, w, h, dir) {
+    let x = Math.max(a.x - w * 0.3, lastRight[dir] + 10);
+    x = Math.min(Math.max(x, 4), paneW - w - 4);
+    let y;
+    if (dir < 0) y = Math.min(a.y - 38, spanTop(x - 6, x + w + 6) - 14) - h;
+    else y = Math.max(a.y + 38, spanBot(x - 6, x + w + 6) + 14);
+    let r = {x, y, w, h};
+    for (let k = 0; k < 30 && hit(r); k++) r = {x, y: r.y + dir * 16, w, h};
+    if (r.y < 4 || r.y + h > paneH - 4 || hit(r)) return null;
+    return r;
+  }
+
+  for (const a of anchors) {
+    const e = a.e;
+    if (a.x === null || a.y === null) continue;
+    const accent = e.verdict_class ? C[e.verdict_class] : (e.is_buy ? C.buy : C.sell);
+
+    // fill point
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', a.x); dot.setAttribute('cy', a.y); dot.setAttribute('r', 5.5);
+    dot.setAttribute('fill', e.is_buy ? C.buy : C.sell); dot.setAttribute('stroke', '#ffffff'); dot.setAttribute('stroke-width', 1.5);
+    svg.appendChild(dot);
+
+    // label
+    const lab = document.createElement('div');
+    lab.className = 'lab';
+    lab.style.borderLeftColor = accent;
+    lab.innerHTML = `<div class="l1"><b>${e.label}</b>${e.line1}</div>` +
+      (e.tag ? `<div class="l2"><span class="v ${e.verdict_class}">${e.verdict}</span>${e.tag}</div>` : '');
+    ov.appendChild(lab);
+    const w = lab.offsetWidth, h = lab.offsetHeight;
+
+    const pref = e.is_buy ? 1 : -1;               // buys below the candles, sells above
+    let spot = null;
+    for (const dir of [pref, -pref]) {
+      const r = placeLabel(a, w, h, dir);
+      if (r) { spot = {r, dir}; break; }
+    }
+    if (!spot) {  // nothing free: put it as close as possible anyway
+      const y = Math.min(Math.max(a.y + pref * 40 - (pref < 0 ? h : 0), 4), paneH - h - 4);
+      spot = {r: {x: Math.min(Math.max(a.x - w * 0.3, 4), paneW - w - 4), y, w, h}, dir: pref};
+    }
+    lastRight[spot.dir] = spot.r.x + w;
+    placed.push(spot.r);
+    lab.style.left = spot.r.x + 'px';
+    lab.style.top = spot.r.y + 'px';
+
+    // arrow from the label edge to the fill point
+    const below = spot.r.y > a.y;
+    const sx = Math.min(Math.max(a.x, spot.r.x + 12), spot.r.x + w - 12);
+    const sy = below ? spot.r.y : spot.r.y + h;
+    const dx = a.x - sx, dy = a.y - sy, len = Math.hypot(dx, dy) || 1;
+    const ex = a.x - dx / len * 8, ey = a.y - dy / len * 8;
+    const mid = 'm' + e.n;
+    const marker = document.createElementNS(NS, 'marker');
+    marker.setAttribute('id', mid); marker.setAttribute('viewBox', '0 0 10 10');
+    marker.setAttribute('refX', 8); marker.setAttribute('refY', 5);
+    marker.setAttribute('markerWidth', 7); marker.setAttribute('markerHeight', 7); marker.setAttribute('orient', 'auto');
+    const tip = document.createElementNS(NS, 'path');
+    tip.setAttribute('d', 'M0,0 L10,5 L0,10 z'); tip.setAttribute('fill', accent);
+    marker.appendChild(tip); defs.appendChild(marker);
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', sx); line.setAttribute('y1', sy); line.setAttribute('x2', ex); line.setAttribute('y2', ey);
+    line.setAttribute('stroke', accent); line.setAttribute('stroke-width', 2);
+    line.setAttribute('marker-end', `url(#${mid})`);
+    svg.appendChild(line);
+  }
+  window.__ready = true;
+}
+requestAnimationFrame(() => requestAnimationFrame(layout));
+</script>
+</body></html>

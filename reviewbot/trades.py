@@ -33,6 +33,7 @@ class Fill:
     side: str               # "Buy" or "Sell"
     qty: int
     price: float
+    role: str = ""          # 进场 / 加仓 / 减仓 / 平仓 (filled in by pair_trades)
 
     @property
     def signed_qty(self) -> int:
@@ -98,14 +99,16 @@ def pair_trades(fills: list[Fill], point_value: dict, commission_per_side: float
                 opening = (pos >= 0 and remaining > 0) or (pos <= 0 and remaining < 0)
                 if opening:
                     step = remaining
+                    role = "加仓" if cur["open"] else "进场"
                     cur["open"].append((f.price, abs(step)))
                 else:
                     step = max(remaining, -pos) if remaining < 0 else min(remaining, -pos)
                     cur["close"].append((f.price, abs(step)))
+                    role = "平仓" if pos + step == 0 else "减仓"
                 pos += step
                 remaining -= step
                 cur["max"] = max(cur["max"], abs(pos))
-                part = Fill(f.time, f.contract, f.side, abs(step), f.price)
+                part = Fill(f.time, f.contract, f.side, abs(step), f.price, role)
                 cur["fills"].append(part)
                 if pos == 0:
                     trades.append(_finish(cur, contract, sym, pv, commission_per_side, f.time))
@@ -164,31 +167,6 @@ def day_stats(trades: list[Trade]) -> dict:
         "symbols": sorted({t.symbol for t in trades}),
         "open_count": len(trades) - len(closed),
     }
-
-
-def describe_trades(trades: list[Trade], tz: str) -> str:
-    """Plain-text table the model reads."""
-    zone = ZoneInfo(tz)
-    lines = []
-    for t in trades:
-        side = "做多" if t.direction == "long" else "做空"
-        et = t.entry_time.astimezone(zone).strftime("%H:%M")
-        if t.is_open:
-            lines.append(f"{t.label} {t.symbol} {side} {t.max_qty}张 {et} 进场 @ {t.entry_avg}（收盘时仍持仓）")
-            continue
-        xt = t.exit_time.astimezone(zone).strftime("%H:%M")
-        held = int((t.exit_time - t.entry_time).total_seconds() // 60)
-        lines.append(
-            f"{t.label} {t.symbol} {side} 最大{t.max_qty}张 | {et} 进场均价 {t.entry_avg} → {xt} 离场均价 {t.exit_avg}"
-            f" | 持仓 {held} 分钟 | 每张 {t.points_per_contract:+} 点 | 盈亏 ${t.pnl_usd:+,.2f}"
-        )
-        if len(t.fills) > 2:
-            detail = "；".join(
-                f"{f.time.astimezone(zone):%H:%M} {'买' if f.side.lower().startswith('b') else '卖'}{f.qty}@{f.price}"
-                for f in t.fills
-            )
-            lines.append(f"    成交明细：{detail}")
-    return "\n".join(lines) if lines else "（今天没有交易）"
 
 
 def describe_stats(s: dict) -> str:

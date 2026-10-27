@@ -22,7 +22,9 @@
   th{color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
   td{padding:11px 10px;border-bottom:1px solid var(--line)}
   td.r,th.r{text-align:right}
-  .n{font-size:22px;width:44px}
+  .n{font-size:18px;width:76px;color:var(--muted)}
+  .score .badge{font-size:18px;padding:3px 12px;margin:0 10px 0 0}
+  .score .hint{color:var(--muted);font-size:16px;margin-left:6px}
   section{margin-top:26px}
   h2{font-size:19px;color:var(--muted);font-weight:500;margin:0 0 10px;letter-spacing:1px}
   .box{background:var(--panel);border-radius:10px;padding:18px 22px}
@@ -60,7 +62,7 @@
   <tr><th></th><th>时间</th><th>品种</th><th>方向</th><th class="r">张数</th><th class="r">进场 → 离场</th><th class="r">每张点数</th><th class="r">盈亏 $</th></tr>
   {% for t in trades %}
   <tr>
-    <td class="n">{{ t.label }}</td>
+    <td class="n">第{{ t.n }}笔</td>
     <td>{{ t.entry_hm }}–{{ t.exit_hm }}</td>
     <td>{{ t.symbol }}</td>
     <td class="{{ 'up' if t.direction == 'long' else 'down' }}">{{ "多" if t.direction == "long" else "空" }}</td>
@@ -81,17 +83,10 @@
 </section>
 
 <section>
-  <h2>逐笔点评</h2>
-  <div class="box">
-    {% for c in review.trades %}
-    <div class="tc">
-      <div class="n">{{ circled(c.n) }}</div>
-      <div>
-        <span class="badge {{ verdict_class(c.verdict) }}">{{ c.verdict }}</span>
-        <div>{{ c.comment }}</div>
-      </div>
-    </div>
-    {% endfor %}
+  <h2>出手 / 出场评分</h2>
+  <div class="box score">
+    {% for k, v in verdict_counts %}<span class="badge {{ verdict_class(k) }}">{{ k }} × {{ v }}</span>{% endfor %}
+    <span class="hint">每一次进出场的点评见 K 线图</span>
   </div>
 </section>
 

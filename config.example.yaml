@@ -1,0 +1,35 @@
+# 复盘机器人配置。复制为 config.yaml 后修改。
+# 密钥（Gemini key、Discord webhook）不要写在这里，写在 .env 文件里。
+
+# 只复盘这个时间段内开仓的交易（美东时间）
+session:
+  timezone: America/New_York
+  start: "09:30"
+  end: "16:00"
+
+# 合约每点价值（美元）。只做 MNQ / MES，其他留着备用。
+point_value:
+  MNQ: 2
+  MES: 5
+  NQ: 20
+  ES: 50
+
+# 每张合约每边手续费（美元），不想算就填 0
+commission_per_side: 0
+
+gemini:
+  # 复盘用的模型。免费额度只开放 Flash 系列。
+  # "gemini-flash-latest" 会自动指向最新的 Flash；想固定版本就填具体名字。
+  review_model: gemini-flash-latest
+  # 筛选群聊知识用的模型（第二阶段使用）
+  filter_model: gemini-flash-lite-latest
+  temperature: 0.4
+
+# 复盘提示词文件，随时可以改
+prompt_file: prompts/review.md
+
+# 当天没有交易时：skip = 什么都不发；notify = 发一句"今天没有交易"
+no_trade_action: notify
+
+# 输出文件保存位置
+output_dir: output

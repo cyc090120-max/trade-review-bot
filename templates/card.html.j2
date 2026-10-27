@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  :root{
+    --bg:#131722; --panel:#1b1f2b; --line:#2a2e39; --text:#e1e3ea; --muted:#8b8fa0;
+    --up:#26a69a; --down:#ef5350; --warn:#f0a73a; --accent:#5b8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"PingFang SC","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+       font-size:20px;line-height:1.65;width:1200px}
+  .wrap{padding:36px 40px 28px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;
+       padding-bottom:24px;border-bottom:1px solid var(--line)}
+  .date{color:var(--muted);font-size:18px;letter-spacing:.5px}
+  h1{margin:6px 0 0;font-size:32px;font-weight:600;line-height:1.35}
+  .pnl{text-align:right;white-space:nowrap}
+  .pnl .num{font-size:46px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+  .pnl .sub{color:var(--muted);font-size:17px;margin-top:6px}
+  .up{color:var(--up)} .down{color:var(--down)} .flat{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin:22px 0 4px;font-size:18px;font-variant-numeric:tabular-nums}
+  th{color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:11px 10px;border-bottom:1px solid var(--line)}
+  td.r,th.r{text-align:right}
+  .n{font-size:22px;width:44px}
+  section{margin-top:26px}
+  h2{font-size:19px;color:var(--muted);font-weight:500;margin:0 0 10px;letter-spacing:1px}
+  .box{background:var(--panel);border-radius:10px;padding:18px 22px}
+  .box p{margin:0}
+  .box p + p{margin-top:12px}
+  .lbl{color:var(--accent);font-weight:600;margin-right:8px}
+  .tc{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}
+  .tc:last-child{border-bottom:none;padding-bottom:0}
+  .tc:first-child{padding-top:0}
+  .tc .n{flex:none}
+  .badge{display:inline-block;font-size:15px;border-radius:5px;padding:1px 9px;margin-bottom:4px;font-weight:600}
+  .b-good{background:rgba(38,166,154,.18);color:var(--up)}
+  .b-mid{background:rgba(240,167,58,.18);color:var(--warn)}
+  .b-bad{background:rgba(239,83,80,.18);color:var(--down)}
+  ol{margin:0;padding-left:28px} li + li{margin-top:8px}
+  ul{margin:0;padding-left:24px}
+  .foot{margin-top:26px;color:var(--muted);font-size:15px;display:flex;justify-content:space-between}
+</style></head>
+<body><div class="wrap">
+
+<div class="top">
+  <div>
+    <div class="date">{{ date_label }} · 美股盘中 09:30–16:00 ET · {{ stats.symbols|join(" / ") or "无交易" }}</div>
+    <h1>{{ review.one_line }}</h1>
+  </div>
+  <div class="pnl">
+    <div class="num {{ 'up' if stats.total_usd > 0 else ('down' if stats.total_usd < 0 else 'flat') }}">
+      {{ "%+.2f"|format(stats.total_usd) }}
+    </div>
+    <div class="sub">{{ stats.closed }} 笔 · 盈 {{ stats.wins }} / 亏 {{ stats.losses }} · 胜率 {{ stats.win_rate }}%</div>
+  </div>
+</div>
+
+<table>
+  <tr><th></th><th>时间</th><th>品种</th><th>方向</th><th class="r">张数</th><th class="r">进场 → 离场</th><th class="r">每张点数</th><th class="r">盈亏 $</th></tr>
+  {% for t in trades %}
+  <tr>
+    <td class="n">{{ t.label }}</td>
+    <td>{{ t.entry_hm }}–{{ t.exit_hm }}</td>
+    <td>{{ t.symbol }}</td>
+    <td class="{{ 'up' if t.direction == 'long' else 'down' }}">{{ "多" if t.direction == "long" else "空" }}</td>
+    <td class="r">{{ t.max_qty }}</td>
+    <td class="r">{{ "{:,.2f}".format(t.entry_avg) }} → {{ "{:,.2f}".format(t.exit_avg) if t.exit_avg is not none else "持仓中" }}</td>
+    <td class="r {{ 'up' if (t.points_per_contract or 0) > 0 else 'down' }}">{{ "%+.2f"|format(t.points_per_contract) if t.points_per_contract is not none else "—" }}</td>
+    <td class="r {{ 'up' if t.pnl_usd > 0 else ('down' if t.pnl_usd < 0 else 'flat') }}">{{ "%+.2f"|format(t.pnl_usd) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<section>
+  <h2>当日环境</h2>
+  <div class="box">
+    <p><span class="lbl">市场</span>{{ review.market_context }}</p>
+    <p><span class="lbl">打法</span>{{ review.playbook_fit }}</p>
+  </div>
+</section>
+
+<section>
+  <h2>逐笔点评</h2>
+  <div class="box">
+    {% for c in review.trades %}
+    <div class="tc">
+      <div class="n">{{ circled(c.n) }}</div>
+      <div>
+        <span class="badge {{ verdict_class(c.verdict) }}">{{ c.verdict }}</span>
+        <div>{{ c.comment }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{% if review.chat_insights %}
+<section>
+  <h2>群聊观点对照</h2>
+  <div class="box"><ul>{% for x in review.chat_insights %}<li>{{ x }}</li>{% endfor %}</ul></div>
+</section>
+{% endif %}
+
+<section>
+  <h2>明日要点</h2>
+  <div class="box"><ol>{% for x in review.tomorrow %}<li>{{ x }}</li>{% endfor %}</ol></div>
+</section>
+
+<div class="foot"><span>{{ model_name }}</span><span>生成于 {{ generated_at }}</span></div>
+</div></body></html>

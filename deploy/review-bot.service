@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily trading review bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/run.sh
+TimeoutStartSec=1800

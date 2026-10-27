@@ -1,0 +1,11 @@
+[Unit]
+Description=Run trading review after US regular session close
+
+[Timer]
+# 按美东时间设定，夏令时切换自动处理
+OnCalendar=Mon..Fri 16:15 America/New_York
+# 服务器当时关机的话，开机后补跑一次
+Persistent=true
+
+[Install]
+WantedBy=timers.target

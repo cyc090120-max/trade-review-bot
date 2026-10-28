@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import sample, session
+from . import sample, tradovate
 from .card import render_card
 from .chart import render_chart
 from .config import load_config
@@ -33,8 +33,8 @@ from .trades import day_stats, describe_stats, filter_session, pair_trades
 def get_fills(cfg: dict, day: str, demo: bool):
     if demo:
         return sample.sample_fills()
-    session.require(cfg["_root"], "tradovate")  # 登录失效时报错，出错消息会推送到 Discord 提醒重新登录
-    raise NotImplementedError("成交数据抓取（Tradovate）还没接入，目前请用 --demo 测试。")
+    # 登录失效时抛出 LoginExpired，出错消息会推送到 Discord 提醒重新登录
+    return tradovate.fetch_fills(cfg["_root"], day, cfg["session"]["timezone"])
 
 
 def get_bars(cfg: dict, day: str, symbols: list[str], demo: bool) -> tuple[dict[str, DayBars], list[str]]:

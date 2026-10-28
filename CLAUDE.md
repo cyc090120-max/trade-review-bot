@@ -83,5 +83,6 @@ tail -50 output/run.log
 - 用户的路由器会断开约 60 秒没有输出的 SSH 连接。耗时命令（安装、pip）用 `nohup ... &` 在服务器后台跑，SSH 加 `-o ServerAliveInterval=15`。
 - 仓库是公开的：服务器地址、端口、密码一类信息不要写进仓库文件。
 - 判断登录：出现登录页 URL 或密码框 = 失效。Discord 未登录时约 4 秒以上才跳登录页，所以 Discord 还要求看到 `/api/v*/users/@me*` 返回 200 才算有效。Tradovate 暂时只靠密码框判断，第 3 步看到真实页面后补一个可靠的"已登录证据"。
+- **Tradovate 网页版的登录在 sessionStorage `api_authenticator_state`**（含 token、`expiration`、`apiHosts`），token 约 80 分钟过期，页面开着时会自己续。cookie 里没有登录。`save_state` 每次都把续过的 token 写回 `_session.json`。网页加载后会调 `live/demo.tradovateapi.com/v1/...`（FN 考试盘在 **demo**：`account/list`、`cashBalance/getcashbalancesnapshot`），第 3 步可以直接监听这些接口的响应拿成交，不用扒 DOM。
 - Discord 会删掉页面里的 `window.localStorage/sessionStorage`，但 Playwright 的 `storage_state` 仍能读到 localStorage。
 - Gemini Flash 会编造一些图上看不出来的细节，比如"剩余仓位保本"。点评的 tag 也经常超过 12 个字，不过目前排版没问题。

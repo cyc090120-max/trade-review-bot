@@ -17,7 +17,9 @@ from pathlib import Path
 
 SITES = {
     "tradovate": {"name": "Tradovate", "url": "https://trader.tradovate.com/", "domain": "tradovate.com",
-                  "indexed_db": True, "done": "看到交易界面（图表或账户信息）就算登录好了。"},
+                  "indexed_db": True, "done": "看到交易界面（图表或账户信息）就算登录好了。",
+                  # the web app lists your accounts right after it accepts the login (FN accounts are on demo)
+                  "proof": r"tradovateapi\.com/v1/account/list"},
     "discord": {"name": "Discord", "url": "https://discord.com/channels/@me", "domain": "discord.com",
                 "indexed_db": False, "done": "看到左边一列服务器图标就算登录好了。",
                 # the web app only gets a 200 from its own-account endpoints when the login is valid
@@ -95,9 +97,20 @@ def open_page(root: Path, site: str):
             browser.close()
 
 
+def read_session_storage(page) -> dict:
+    # Discord deletes window.sessionStorage from the page, so this can come back empty
+    return page.evaluate("(() => { try { return Object.fromEntries(Object.entries(sessionStorage)); }"
+                         " catch (e) { return {}; } })()")
+
+
 def save_state(page, root: Path, site: str) -> None:
-    """Write back refreshed cookies so the login lasts as long as the site allows."""
+    """Write back refreshed cookies and session tokens so the login lasts as long as the site allows.
+    Tradovate keeps its ~80-minute access token in sessionStorage and renews it while the page is open."""
     page.context.storage_state(path=str(state_file(root, site)), indexed_db=SITES[site]["indexed_db"])
+    items = read_session_storage(page)
+    origin = page.evaluate("location.origin")
+    if items and origin.split("//")[-1].endswith(SITES[site]["domain"]):
+        session_file(root, site).write_text(json.dumps({"origin": origin, "items": items}), encoding="utf-8")
 
 
 def check(root: Path, site: str) -> bool:

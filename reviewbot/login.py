@@ -13,7 +13,7 @@ import sys
 from datetime import datetime
 
 from .config import ROOT
-from .session import SITES, looks_logged_in, session_file, state_file
+from .session import SITES, looks_logged_in, read_session_storage, session_file, state_file
 
 PROFILE = ROOT / "secrets" / "mac-profile"
 
@@ -24,9 +24,7 @@ def save(page, site: str) -> None:
     # the Mac profile is shared by both sites: keep only this site's cookies and storage
     state["cookies"] = [c for c in state["cookies"] if c["domain"].lstrip(".").endswith(domain)]
     state["origins"] = [o for o in state["origins"] if o["origin"].split("//")[-1].endswith(domain)]
-    # Discord deletes window.sessionStorage / localStorage from the page, so this can come back empty
-    items = page.evaluate("(() => { try { return Object.fromEntries(Object.entries(sessionStorage)); }"
-                          " catch (e) { return {}; } })()")
+    items = read_session_storage(page)
     info = {  # names only, no values: tells us where each site keeps its login
         "saved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "url": page.url,

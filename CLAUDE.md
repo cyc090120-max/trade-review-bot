@@ -41,19 +41,22 @@
 | `reviewbot/gemini_review.py` | 提示词组装（`%%` 开头的行是备注，`{{X}}` 是占位符），结构化输出 `Review`，每个事件一条 `EventComment(n, verdict, tag≤12字, comment)` |
 | `reviewbot/card.py` + `templates/card.html.j2` | 总结卡片：盈亏表、当日环境、评分汇总、群聊观点、明日要点 |
 | `reviewbot/push.py` | Discord webhook 发图 |
+| `login.sh` + `reviewbot/login.py` | **在 Mac 上运行**：用真 Chrome（独立 profile `secrets/mac-profile`）手动登录，按网站分别保存 `secrets/<site>_state.json`（cookie+localStorage，Tradovate 含 IndexedDB）、`_session.json`（sessionStorage）、`_info.json`（只记键名，用来分析登录存在哪），再 scp 到服务器并检查。服务器地址在 Mac 的 `.env`（`SERVER_SSH` 等） |
+| `reviewbot/session.py` | 服务器端：`open_page(root, site)` 带登录打开无头页面（第 3、4 步用它）；`check`/`require` 判断登录是否有效，有效时把刷新后的 cookie 写回；`python -m reviewbot.session check` 失效时推送提醒 |
 | `reviewbot/sample.py`, `samples/` | 示例数据（`--demo`），成交价取自示例 K 线 |
 | `install.sh`, `run.sh`, `deploy/` | Ubuntu/Debian 一键安装，systemd 定时 `Mon..Fri 16:15 America/New_York` |
 | `reviewbot/vendor/` | lightweight-charts 5.2.1（Apache-2.0），不要删 LICENSE |
 
 ## 当前进度
 - ✅ 成交配对、事件编号、K 线标注图、总结卡片、Gemini 调用、Discord 推送、安装脚本、定时任务。用示例数据跑通（`--demo --offline`）。
-- ⚠️ 还没在用户服务器上实测：真实 Gemini 调用、webhook 推送、yfinance 行情。开发沙盒里连不上这些服务。
+- ✅ 已部署到用户服务器（Debian 13，root 用户，`/root/trade-review-bot`），2026-10-28 实测通过：真实 Gemini 调用、webhook 推送、yfinance 行情（10/27 MNQ/MES 各 78 根）、中文字体渲染。
+- ⏸ 定时任务 `review-bot.timer` 已 disable：成交抓取没写之前每天会报错推送。第 3 步做完后 `systemctl enable --now review-bot.timer`。
 - ⏳ `main.get_fills()`：Tradovate 成交抓取还没写，目前非 demo 模式会直接报错。
 - ⏳ `main.get_chat_knowledge()`：Discord 群聊读取还没写。
 
 ## 下一步（按顺序）
-1. **部署到服务器并验证**：`gh repo clone` → `./install.sh` → 填 `.env` → `./run.sh --demo`，确认 Gemini 和推送正常。再找一个真实交易日测试 `market.fetch_day`。
-2. **Mac 登录工具**：一个脚本，用 Playwright 打开有界面的浏览器，让用户手动登录 Tradovate 和 Discord，保存 `storage_state` 到 `secrets/`（已在 .gitignore 里），再拷到服务器。登录失效时通过 webhook 提醒用户重新登录。
+1. ~~部署到服务器并验证~~ ✅ 已完成。
+2. **Mac 登录工具**（代码已写好并自测，等用户第一次真实登录验证）：一个脚本，用 Playwright 打开有界面的浏览器，让用户手动登录 Tradovate 和 Discord，保存 `storage_state` 到 `secrets/`（已在 .gitignore 里），再拷到服务器。登录失效时通过 webhook 提醒用户重新登录。
 3. **Tradovate 成交抓取**：用 storage_state 打开 Tradovate 网页版，拿当天成交，转成 `trades.Fill`（时间要带时区）。可以导出 CSV，也可以读页面里的成交数据。先对着真实页面看结构再写，选择器不要凭空猜。注意官方 fill/list 只返回当天数据。
 4. **Discord 读取**：用 storage_state 打开那个频道，往上翻到当天开盘前，提取文字（作者、时间、内容）。用 Gemini Flash-Lite 筛出与行情或交易相关的观点，填入 `{{CHAT_KNOWLEDGE}}`。可以顺便积累到长期知识库文件。这和用户的另一个项目"蒸馏夜航社交易员 junkman 的交易思路"可以共用。
 5. 用户自己调整 `prompts/review.md`。
@@ -75,3 +78,8 @@ tail -50 output/run.log
 - Gemini 可能漏掉编号或多编号，`main.complete_review` 会补齐并去掉多余的，别删。
 - Yahoo 用主力连续合约，换月那一周成交价可能和 K 线对不上，推送里会出现提示。
 - 服务器需要中文字体（`fonts-noto-cjk`），`install.sh` 已经装了。
+- 用户的路由器会断开约 60 秒没有输出的 SSH 连接。耗时命令（安装、pip）用 `nohup ... &` 在服务器后台跑，SSH 加 `-o ServerAliveInterval=15`。
+- 仓库是公开的：服务器地址、端口、密码一类信息不要写进仓库文件。
+- 判断登录：出现登录页 URL 或密码框 = 失效。Discord 未登录时约 4 秒以上才跳登录页，所以 Discord 还要求看到 `/api/v*/users/@me*` 返回 200 才算有效。Tradovate 暂时只靠密码框判断，第 3 步看到真实页面后补一个可靠的"已登录证据"。
+- Discord 会删掉页面里的 `window.localStorage/sessionStorage`，但 Playwright 的 `storage_state` 仍能读到 localStorage。
+- Gemini Flash 会编造一些图上看不出来的细节，比如"剩余仓位保本"。点评的 tag 也经常超过 12 个字，不过目前排版没问题。

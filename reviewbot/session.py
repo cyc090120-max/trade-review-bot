@@ -5,6 +5,7 @@ the result is saved under secrets/ and copied to the server.
 
     python -m reviewbot.session check              # 检查两个登录是否有效，失效就发 Discord 提醒
     python -m reviewbot.session check tradovate
+    python -m reviewbot.session keepalive          # 续期 Tradovate 登录，定时任务每 20 分钟跑一次
 """
 from __future__ import annotations
 
@@ -113,6 +114,46 @@ def save_state(page, root: Path, site: str) -> None:
         session_file(root, site).write_text(json.dumps({"origin": origin, "items": items}), encoding="utf-8")
 
 
+def renew_tradovate(root: Path) -> str:
+    """Renew the ~80-minute Tradovate token the way the web app does; returns the new expiration.
+    The web app cannot recover once the token has expired, so this has to run well before that."""
+    import requests
+
+    sf = session_file(root, "tradovate")
+    if not sf.exists():
+        raise LoginExpired(relogin_hint("tradovate"))
+    saved = json.loads(sf.read_text(encoding="utf-8"))
+    auth = json.loads(saved["items"]["api_authenticator_state"])
+    host = auth["apiHosts"][auth.get("environment", "demo")]
+    r = requests.get(f"https://{host}/v1/auth/renewaccesstoken",
+                     headers={"Authorization": f"Bearer {auth['token']}"}, timeout=30)
+    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    if r.status_code == 401 or (r.ok and not data.get("accessToken")):
+        raise LoginExpired(relogin_hint("tradovate"))
+    r.raise_for_status()
+    auth["token"], auth["expiration"] = data["accessToken"], data["expirationTime"]
+    saved["items"]["api_authenticator_state"] = json.dumps(auth)
+    sf.write_text(json.dumps(saved), encoding="utf-8")
+    return data["expirationTime"]
+
+
+def keepalive(root: Path, webhook: str) -> bool:
+    """Run every 20 minutes. Alerts once when the login is gone, not on every run."""
+    flag = root / "secrets" / "tradovate_alerted"
+    try:
+        exp = renew_tradovate(root)
+    except LoginExpired as e:
+        print(f"❌ {e}")
+        if webhook and not flag.exists():
+            from .push import send_text
+            send_text(webhook, f"🔑 {e}")
+            flag.touch()
+        return False
+    flag.unlink(missing_ok=True)
+    print(f"✅ Tradovate 登录已续期，有效到 {exp}")
+    return True
+
+
 def check(root: Path, site: str) -> bool:
     try:
         with open_page(root, site) as page:
@@ -138,9 +179,12 @@ def main() -> None:
     from .push import send_text
 
     args = sys.argv[1:]
-    if not args or args[0] != "check" or any(s not in SITES for s in args[1:]):
-        sys.exit("用法：python -m reviewbot.session check [tradovate] [discord]")
     cfg = load_config()
+    if args == ["keepalive"]:
+        sys.exit(0 if keepalive(cfg["_root"], cfg["discord_webhook_url"]) else 1)
+    if not args or args[0] != "check" or any(s not in SITES for s in args[1:]):
+        sys.exit("用法：python -m reviewbot.session check [tradovate] [discord]\n"
+                 "      python -m reviewbot.session keepalive      # 续期 Tradovate 登录（每 20 分钟自动运行）")
     bad = []
     for site in args[1:] or list(SITES):
         ok = check(cfg["_root"], site)

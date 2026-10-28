@@ -44,6 +44,7 @@
 | `reviewbot/card.py` + `templates/card.html.j2` | 总结卡片：盈亏表、当日环境、评分汇总、群聊观点、明日要点 |
 | `reviewbot/push.py` | Discord webhook 发图 |
 | `login.sh` + `reviewbot/login.py` | **在 Mac 上运行**：用真 Chrome（独立 profile `secrets/mac-profile`）手动登录，按网站分别保存 `secrets/<site>_state.json`（cookie+localStorage，Tradovate 含 IndexedDB）、`_session.json`（sessionStorage）、`_info.json`（只记键名，用来分析登录存在哪），再 scp 到服务器并检查。服务器地址在 Mac 的 `.env`（`SERVER_SSH` 等） |
+| `reviewbot/tradovate.py` | 当天成交：监听网页版 `user/syncrequest`，解析 fills，按天缓存到 `data/fills/`（Tradovate 只给当前交易日，美东 18:00 换日） |
 | `reviewbot/session.py` | 服务器端：`open_page(root, site)` 带登录打开无头页面（第 3、4 步用它）；`check`/`require` 判断登录是否有效，有效时把刷新后的 cookie 写回；`python -m reviewbot.session check` 失效时推送提醒 |
 | `reviewbot/sample.py`, `samples/` | 示例数据（`--demo`），成交价取自示例 K 线 |
 | `install.sh`, `run.sh`, `deploy/` | Ubuntu/Debian 一键安装，systemd 定时 `Mon..Fri 16:15 America/New_York` |
@@ -53,7 +54,7 @@
 - ✅ 成交配对、事件编号、K 线标注图、总结卡片、Gemini 调用、Discord 推送、安装脚本、定时任务。用示例数据跑通（`--demo --offline`）。
 - ✅ 已部署到用户服务器（Debian 13，root 用户，`/root/trade-review-bot`），2026-10-28 实测通过：真实 Gemini 调用、webhook 推送、yfinance 行情（10/27 MNQ/MES 各 78 根）、中文字体渲染。
 - ⏸ 定时任务 `review-bot.timer` 已 disable：成交抓取没写之前每天会报错推送。第 3 步做完后 `systemctl enable --now review-bot.timer`。
-- ⏳ `main.get_fills()`：Tradovate 成交抓取还没写，目前非 demo 模式会直接报错。
+- 🟡 Tradovate 成交抓取（`reviewbot/tradovate.py`）已写好：接收网页版 websocket `user/syncrequest` 返回的 `fills` + `contracts`，按 `tradeDate` 过滤，存到 `data/fills/日期.json`。服务器上已确认能收到同步数据（约 11 秒）。**还没在有成交的交易日验证过** fill 字段（按官方文档：`contractId/timestamp/tradeDate/action/qty/price/active`）。
 - ⏳ `main.get_chat_knowledge()`：Discord 群聊读取还没写。
 
 ## 下一步（按顺序）

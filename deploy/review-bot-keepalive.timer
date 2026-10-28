@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew the Tradovate login every 20 minutes
+
+[Timer]
+OnCalendar=*:0/20
+OnBootSec=1min
+
+[Install]
+WantedBy=timers.target

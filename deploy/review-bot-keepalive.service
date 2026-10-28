@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep the saved Tradovate login alive (token lasts ~80 minutes)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/.venv/bin/python -m reviewbot.session keepalive
+TimeoutStartSec=120

@@ -22,11 +22,13 @@ echo "▶ 4/5 准备配置文件"
 [ -f .env ] || { cp .env.example .env; chmod 600 .env; }
 chmod +x run.sh
 
-echo "▶ 5/5 设置定时任务（周一到周五 美东 16:15）"
-sed -e "s#__DIR__#${DIR}#g" -e "s#__USER__#${USER_NAME}#g" deploy/review-bot.service | sudo tee /etc/systemd/system/review-bot.service >/dev/null
-sudo cp deploy/review-bot.timer /etc/systemd/system/review-bot.timer
+echo "▶ 5/5 设置定时任务（周一到周五 美东 16:15 复盘；每 20 分钟续期 Tradovate 登录）"
+for unit in review-bot review-bot-keepalive; do
+  sed -e "s#__DIR__#${DIR}#g" -e "s#__USER__#${USER_NAME}#g" deploy/${unit}.service | sudo tee /etc/systemd/system/${unit}.service >/dev/null
+  sudo cp deploy/${unit}.timer /etc/systemd/system/${unit}.timer
+done
 sudo systemctl daemon-reload
-sudo systemctl enable --now review-bot.timer
+sudo systemctl enable --now review-bot.timer review-bot-keepalive.timer
 
 echo
 echo "✅ 安装完成。下一步："

@@ -29,7 +29,7 @@ for s in $SITES; do FILES+=("secrets/${s}_state.json" "secrets/${s}_session.json
 
 echo
 echo "▶ 上传到服务器"
-ssh -p "$PORT" "$SERVER_SSH" "mkdir -p '$DIR/secrets' && chmod 700 '$DIR/secrets'"
-scp -q -P "$PORT" "${FILES[@]}" "$SERVER_SSH:$DIR/secrets/"
+ssh -o ServerAliveInterval=15 -p "$PORT" "$SERVER_SSH" "mkdir -p '$DIR/secrets' && chmod 700 '$DIR/secrets'"
+scp -q -o ServerAliveInterval=15 -P "$PORT" "${FILES[@]}" "$SERVER_SSH:$DIR/secrets/"
 echo "▶ 在服务器上检查登录是否有效（每个网站约 15 秒）"
-ssh -p "$PORT" "$SERVER_SSH" "cd '$DIR' && .venv/bin/python -m reviewbot.session check $SITES"
+ssh -o ServerAliveInterval=15 -p "$PORT" "$SERVER_SSH" "cd '$DIR' && .venv/bin/python -m reviewbot.session check $SITES"

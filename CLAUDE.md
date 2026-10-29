@@ -53,16 +53,16 @@
 ## 当前进度
 - ✅ 成交配对、事件编号、K 线标注图、总结卡片、Gemini 调用、Discord 推送、安装脚本、定时任务。用示例数据跑通（`--demo --offline`）。
 - ✅ 已部署到用户服务器（Debian 13，root 用户，`/root/trade-review-bot`），2026-10-28 实测通过：真实 Gemini 调用、webhook 推送、yfinance 行情（10/27 MNQ/MES 各 78 根）、中文字体渲染。
-- ⏸ 定时任务 `review-bot.timer` 已 disable：成交抓取没写之前每天会报错推送。第 3 步做完后 `systemctl enable --now review-bot.timer`。
-- 🟡 Tradovate 成交抓取（`reviewbot/tradovate.py`）已写好：接收网页版 websocket `user/syncrequest` 返回的 `fills` + `contracts`，按 `tradeDate` 过滤，存到 `data/fills/日期.json`。服务器上已确认能收到同步数据（约 11 秒）。**还没在有成交的交易日验证过** fill 字段（按官方文档：`contractId/timestamp/tradeDate/action/qty/price/active`）。
+- ✅ Mac 登录工具 + 服务器登录检查。Tradovate token 约 80 分钟过期且**过期后网页无法恢复**，所以 `review-bot-keepalive.timer` 每 20 分钟调用 `/v1/auth/renewaccesstoken` 续期（失效只提醒一次，标记文件 `secrets/tradovate_alerted`）。服务器断网超过约 80 分钟就要用户重新 `./login.sh tradovate`。
+- ✅ Tradovate 成交抓取：2026-10-29 用真实成交跑通全流程（MES 14 次进出场，字段与官方文档一致），已推送。
+- ✅ 两个定时任务已在服务器启用：`review-bot.timer`（Mon..Fri 16:15 ET）、`review-bot-keepalive.timer`（每 20 分钟）。
+- ⚠️ **K 线图标注在出手多的日子会乱**：10/29 有 14 个编号集中在 10:00–13:10，标签被铺满整个宽度，引线很长且互相交叉，⑤ 的标签被 ⑬ 盖住。`chart.py` 的布局需要改成：标签尽量贴近自己的 K 线、允许上下多行、禁止重叠。
 - ⏳ `main.get_chat_knowledge()`：Discord 群聊读取还没写。
 
 ## 下一步（按顺序）
-1. ~~部署到服务器并验证~~ ✅ 已完成。
-2. **Mac 登录工具**（代码已写好并自测，等用户第一次真实登录验证）：一个脚本，用 Playwright 打开有界面的浏览器，让用户手动登录 Tradovate 和 Discord，保存 `storage_state` 到 `secrets/`（已在 .gitignore 里），再拷到服务器。登录失效时通过 webhook 提醒用户重新登录。
-3. **Tradovate 成交抓取**：用 storage_state 打开 Tradovate 网页版，拿当天成交，转成 `trades.Fill`（时间要带时区）。可以导出 CSV，也可以读页面里的成交数据。先对着真实页面看结构再写，选择器不要凭空猜。注意官方 fill/list 只返回当天数据。
-4. **Discord 读取**：用 storage_state 打开那个频道，往上翻到当天开盘前，提取文字（作者、时间、内容）。用 Gemini Flash-Lite 筛出与行情或交易相关的观点，填入 `{{CHAT_KNOWLEDGE}}`。可以顺便积累到长期知识库文件。这和用户的另一个项目"蒸馏夜航社交易员 junkman 的交易思路"可以共用。
-5. 用户自己调整 `prompts/review.md`。
+1. **修 K 线图标注布局**（见上面 ⚠️），用 `output/2026-10-29` 的真实数据（`data/fills/2026-10-29.json`）复现。
+2. **Discord 读取**：用 `session.open_page(root, "discord")` 打开那个频道，往上翻到当天开盘前，提取文字（作者、时间、内容）。用 Gemini Flash-Lite 筛出与行情或交易相关的观点，填入 `{{CHAT_KNOWLEDGE}}`。可以顺便积累到长期知识库文件。这和用户的另一个项目"蒸馏夜航社交易员 junkman 的交易思路"可以共用。先对着真实页面看结构再写，选择器不要凭空猜。
+3. **提示词**（用户说先放后面）：已经问过用户 6 个问题（大级别怎么判断、回调进场条件、止损、出场、不做的情况、点评风格），还没回答。同时可以改代码给 AI 补数据：A. 多日 1 小时 K 线做大级别背景；B. 当天 5 分钟 K 线表格让价位精确；C. 从 Tradovate 同步数据的 `orders` 读真实止损/止盈；D. 提示词要求不推测数据里没有的信息。
 
 ## 常用命令
 ```bash

@@ -25,6 +25,14 @@ gemini:
   filter_model: gemini-flash-lite-latest
   temperature: 0.4
 
+# 关键位设置（美东时间）。不填就用下面这些默认值。
+levels:
+  asia: ["18:00", "03:00"]      # 亚盘：前一天 18:00 到当天 03:00
+  london: ["03:00", "09:30"]    # 伦敦盘：03:00 到美股开盘
+  round_step:                   # 整数关口间隔（点）
+    MNQ: 100
+    MES: 50
+
 # 复盘提示词文件，随时可以改
 prompt_file: prompts/review.md
 

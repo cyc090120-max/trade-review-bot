@@ -12,7 +12,8 @@ class EventComment(BaseModel):
     n: int = Field(description="出手/出场编号，与输入中的 ①②③ 一致（填数字 1、2、3）")
     verdict: str = Field(description="结论，只能是：执行到位 / 可以改进 / 不该做")
     tag: str = Field(description="贴在 K 线图上的短评，12 个字以内，说出这一下好或不好的关键原因")
-    comment: str = Field(description="完整点评，2-3 句，指出具体 K 线或价格")
+    comment: str = Field(description="站在当时评价：当时看到了什么、这样做对不对，2-3 句，指出具体 K 线、价格或关键位")
+    hindsight: str = Field(default="", description="事后走势一句话，只作参考，不影响结论；没什么可说就留空")
 
 
 class Review(BaseModel):

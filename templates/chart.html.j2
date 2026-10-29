@@ -2,40 +2,36 @@
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
   :root{--bg:#131722;--panel:#1b1f2b;--line:#2a2e39;--text:#e1e3ea;--muted:#8b8fa0;
-        --up:#26a69a;--down:#ef5350;--buy:#2962ff;--sell:#ff9800;--good:#26a69a;--mid:#f0a73a;--bad:#ef5350}
+        --up:#26a69a;--down:#ef5350;--good:#26a69a;--mid:#f0a73a;--bad:#ef5350}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);width:1600px;
+  body{margin:0;background:var(--bg);color:var(--text);width:{{ width }}px;
        font-family:"PingFang SC","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif}
-  .head{display:flex;justify-content:space-between;align-items:baseline;padding:22px 28px 12px}
-  .head h1{margin:0;font-size:28px;font-weight:600}
-  .head .sub{color:var(--muted);font-size:17px;margin-left:14px;font-weight:400}
-  .head .pnl{font-size:18px;color:var(--muted);font-variant-numeric:tabular-nums}
-  .head .pnl b{font-size:24px;margin-left:6px}
+  .head{padding:20px 24px 10px}
+  .head h1{margin:0;font-size:28px;font-weight:600;line-height:1.35}
+  .head .sub{color:var(--muted);font-size:18px;margin-top:4px;font-variant-numeric:tabular-nums}
+  .head .sub b{font-weight:600}
   .up{color:var(--up)} .down{color:var(--down)}
-  #wrap{position:relative;width:1600px;height:{{ height }}px}
+  #wrap{position:relative;width:{{ width }}px;height:{{ chart_height }}px}
   #chart{position:absolute;inset:0}
   #ov{position:absolute;left:0;top:0;pointer-events:none;z-index:20}
   #ov svg{position:absolute;left:0;top:0;overflow:visible}
-  .lab{position:absolute;background:rgba(27,31,43,.96);border:1px solid var(--line);border-left:4px solid var(--buy);
-       border-radius:6px;padding:6px 10px 7px;font-size:15px;line-height:1.45;white-space:nowrap;
-       box-shadow:0 2px 10px rgba(0,0,0,.35)}
-  .lab .l1{color:var(--text);font-variant-numeric:tabular-nums}
-  .lab .l1 b{font-size:17px;margin-right:4px}
-  .lab .l2{margin-top:2px;font-size:15px}
-  .v{display:inline-block;border-radius:4px;padding:0 6px;margin-right:6px;font-size:13px;font-weight:600}
+  .list{padding:8px 24px 22px}
+  .item{display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)}
+  .item .num{font-size:28px;line-height:1.3;flex:none;width:34px}
+  .item .meta{color:var(--muted);font-size:19px;font-variant-numeric:tabular-nums}
+  .item .meta strong{color:var(--text);font-weight:600;margin-right:8px}
+  .item .tag{font-size:23px;font-weight:600;margin:4px 0 2px}
+  .item .cm{font-size:21px;line-height:1.6}
+  .item .after{font-size:18px;line-height:1.55;color:var(--muted);margin-top:6px}
+  .v{display:inline-block;border-radius:5px;padding:0 8px;margin-right:8px;font-size:18px;font-weight:600;vertical-align:2px}
   .v.good{background:rgba(38,166,154,.2);color:var(--good)}
   .v.mid{background:rgba(240,167,58,.2);color:var(--mid)}
   .v.bad{background:rgba(239,83,80,.2);color:var(--bad)}
-  .list{padding:16px 28px 26px;font-size:18px;line-height:1.7}
-  .item{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
-  .item .num{font-size:22px;line-height:1.5;flex:none;width:30px}
-  .item .meta{color:var(--muted);font-variant-numeric:tabular-nums}
-  .item .meta strong{color:var(--text);font-weight:600;margin-right:8px}
 </style></head>
 <body>
 <div class="head">
-  <h1>{{ symbol }} 5分钟<span class="sub">{{ date_label }} · 美股盘中 09:30–16:00 ET</span></h1>
-  <div class="pnl">{% for p in trade_pnls %}第{{ p.n }}笔 <span class="{{ 'up' if p.usd > 0 else 'down' }}">{{ "%+.2f"|format(p.usd) }}</span>　{% endfor %}合计<b class="{{ 'up' if total > 0 else 'down' }}">{{ "%+.2f"|format(total) }}</b></div>
+  <h1>{{ title }}</h1>
+  <div class="sub">{{ sub|safe }}</div>
 </div>
 <div id="wrap"><div id="chart"></div><div id="ov"><svg id="svg"></svg></div></div>
 
@@ -45,8 +41,10 @@
   <div class="item">
     <div class="num">{{ it.label }}</div>
     <div>
-      <div class="meta"><strong>{{ it.time }} {{ it.title }}</strong>{{ it.action }}{% if it.verdict %}　<span class="v {{ it.vclass }}">{{ it.verdict }}</span>{% endif %}</div>
-      {% if it.comment %}<div>{{ it.comment }}</div>{% endif %}
+      <div class="meta"><strong>{{ it.time }} {{ it.title }}</strong>{{ it.action }}</div>
+      <div class="tag"><span class="v {{ it.vclass }}">{{ it.verdict }}</span>{{ it.tag }}</div>
+      <div class="cm">{{ it.comment }}</div>
+      {% if it.hindsight %}<div class="after">事后：{{ it.hindsight }}</div>{% endif %}
     </div>
   </div>
   {% endfor %}
@@ -56,20 +54,21 @@
 <script src="{{ lib_uri }}"></script>
 <script>
 const BARS = {{ bars_json|safe }};
+const VWAP = {{ vwap_json|safe }};
 const LEVELS = {{ levels_json|safe }};
 const SCALE_EXTRA = {{ scale_extra_json|safe }};
-const EVENTS = {{ events_json|safe }};
-const W = 1600, H = {{ height }};
+const MARKERS = {{ markers_json|safe }};
+const W = {{ width }}, H = {{ chart_height }};
 const C = {bg:'#131722', grid:'#1e222d', text:'#d1d4dc', border:'#2a2e39', up:'#26a69a', down:'#ef5350',
-           buy:'#2962ff', sell:'#ff9800', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350'};
+           buy:'#2962ff', sell:'#ff9800', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350', vwap:'#e0e0e0'};
 const LC = LightweightCharts;
 
 const chart = LC.createChart(document.getElementById('chart'), {
   width: W, height: H,
-  layout: {background: {color: C.bg}, textColor: C.text, fontSize: 14},
+  layout: {background: {color: C.bg}, textColor: C.text, fontSize: 15},
   grid: {vertLines: {color: C.grid}, horzLines: {color: C.grid}},
-  timeScale: {timeVisible: true, secondsVisible: false, borderColor: C.border, rightOffset: 3},
-  rightPriceScale: {borderColor: C.border, scaleMargins: {top: 0.17, bottom: 0.17}},
+  timeScale: {timeVisible: true, secondsVisible: false, borderColor: C.border, rightOffset: 2},
+  rightPriceScale: {borderColor: C.border, scaleMargins: {top: 0.1, bottom: 0.1}},
   crosshair: {vertLine: {visible: false}, horzLine: {visible: false}},
 });
 const series = chart.addSeries(LC.CandlestickSeries, {
@@ -86,12 +85,17 @@ const series = chart.addSeries(LC.CandlestickSeries, {
   },
 });
 series.setData(BARS);
+if (VWAP.length) {
+  const vw = chart.addSeries(LC.LineSeries, {color: C.vwap, lineWidth: 2, lineStyle: 0, lastValueVisible: false,
+                                             priceLineVisible: false, crosshairMarkerVisible: false, title: 'VWAP'});
+  vw.setData(VWAP);
+}
 for (const l of LEVELS) {
-  series.createPriceLine({price: l.price, color: l.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: l.name});
+  series.createPriceLine({price: l.price, color: l.color, lineWidth: l.width, lineStyle: 2, axisLabelVisible: true, title: l.name});
 }
 chart.timeScale().fitContent();
 
-function layout() {
+function draw() {
   const paneW = W - chart.priceScale('right').width();
   const paneH = H - chart.timeScale().height();
   const ov = document.getElementById('ov');
@@ -99,92 +103,43 @@ function layout() {
   ov.style.width = paneW + 'px'; ov.style.height = paneH + 'px';
   svg.setAttribute('width', paneW); svg.setAttribute('height', paneH);
   const NS = 'http://www.w3.org/2000/svg';
-  const defs = document.createElementNS(NS, 'defs');
-  svg.appendChild(defs);
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
 
-  const placed = [];   // labels + fill points
-  const hit = (r) => placed.some(p => !(r.x + r.w + 6 < p.x || p.x + p.w + 6 < r.x || r.y + r.h + 6 < p.y || p.y + p.h + 6 < r.y));
-
-  const anchors = EVENTS.map(e => ({e, x: chart.timeScale().timeToCoordinate(e.bar_time), y: series.priceToCoordinate(e.price)}));
-  for (const a of anchors) placed.push({x: a.x - 8, y: a.y - 8, w: 16, h: 16});
-  const candles = BARS.map(b => ({x: chart.timeScale().timeToCoordinate(b.time),
-                                  yh: series.priceToCoordinate(b.high), yl: series.priceToCoordinate(b.low)}))
-                      .filter(c => c.x !== null && c.yh !== null && c.yl !== null);
-  // highest / lowest candle pixel inside a horizontal span, so a label clears every candle under it
-  const spanTop = (x0, x1) => Math.min(...candles.filter(c => c.x >= x0 && c.x <= x1).map(c => c.yh), Infinity);
-  const spanBot = (x0, x1) => Math.max(...candles.filter(c => c.x >= x0 && c.x <= x1).map(c => c.yl), -Infinity);
-  // labels on each side are laid out left-to-right in time order, so they read in number order
-  const lastRight = {'-1': -Infinity, '1': -Infinity};
-
-  function placeLabel(a, w, h, dir) {
-    let x = Math.max(a.x - w * 0.3, lastRight[dir] + 10);
-    x = Math.min(Math.max(x, 4), paneW - w - 4);
-    let y;
-    if (dir < 0) y = Math.min(a.y - 38, spanTop(x - 6, x + w + 6) - 14) - h;
-    else y = Math.max(a.y + 38, spanBot(x - 6, x + w + 6) + 14);
-    let r = {x, y, w, h};
-    for (let k = 0; k < 30 && hit(r); k++) r = {x, y: r.y + dir * 16, w, h};
-    if (r.y < 4 || r.y + h > paneH - 4 || hit(r)) return null;
-    return r;
+  // each fill: a dot at the exact price, a numbered badge just above (sells) or below (buys) its candle
+  const placed = [];
+  const R = 15;
+  const free = (x, y) => placed.every(p => Math.hypot(p.x - x, p.y - y) > 2 * R + 3) && y > R + 2 && y < paneH - R - 2;
+  const top = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.high) : null; };
+  const bot = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.low) : null; };
+  for (const m of MARKERS) {
+    const x = chart.timeScale().timeToCoordinate(m.bar_time), y = series.priceToCoordinate(m.price);
+    if (x === null || y === null) continue;
+    placed.push({x, y});
   }
-
-  for (const a of anchors) {
-    const e = a.e;
-    if (a.x === null || a.y === null) continue;
-    const accent = e.verdict_class ? C[e.verdict_class] : (e.is_buy ? C.buy : C.sell);
-
-    // fill point
-    const dot = document.createElementNS(NS, 'circle');
-    dot.setAttribute('cx', a.x); dot.setAttribute('cy', a.y); dot.setAttribute('r', 5.5);
-    dot.setAttribute('fill', e.is_buy ? C.buy : C.sell); dot.setAttribute('stroke', '#ffffff'); dot.setAttribute('stroke-width', 1.5);
-    svg.appendChild(dot);
-
-    // label
-    const lab = document.createElement('div');
-    lab.className = 'lab';
-    lab.style.borderLeftColor = accent;
-    lab.innerHTML = `<div class="l1"><b>${e.label}</b>${e.line1}</div>` +
-      (e.tag ? `<div class="l2"><span class="v ${e.verdict_class}">${e.verdict}</span>${e.tag}</div>` : '');
-    ov.appendChild(lab);
-    const w = lab.offsetWidth, h = lab.offsetHeight;
-
-    const pref = e.is_buy ? 1 : -1;               // buys below the candles, sells above
-    let spot = null;
-    for (const dir of [pref, -pref]) {
-      const r = placeLabel(a, w, h, dir);
-      if (r) { spot = {r, dir}; break; }
+  for (const m of MARKERS) {
+    const x = chart.timeScale().timeToCoordinate(m.bar_time), y = series.priceToCoordinate(m.price);
+    if (x === null || y === null) continue;
+    const color = m.verdict_class ? C[m.verdict_class] : (m.is_buy ? C.buy : C.sell);
+    let dir = m.is_buy ? 1 : -1;
+    const edge = (d) => d < 0 ? Math.min(top(m.bar_time) ?? y, y) : Math.max(bot(m.bar_time) ?? y, y);
+    let by = null, bx = x;
+    for (const d of [dir, -dir]) {
+      for (let k = 0; k < 10 && by === null; k++) {
+        const cy = edge(d) + d * (R + 14 + k * (2 * R + 4));
+        for (const dx of [0, -R * 1.6, R * 1.6]) if (by === null && free(x + dx, cy)) { by = cy; bx = x + dx; dir = d; }
+      }
+      if (by !== null) break;
     }
-    if (!spot) {  // nothing free: put it as close as possible anyway
-      const y = Math.min(Math.max(a.y + pref * 40 - (pref < 0 ? h : 0), 4), paneH - h - 4);
-      spot = {r: {x: Math.min(Math.max(a.x - w * 0.3, 4), paneW - w - 4), y, w, h}, dir: pref};
-    }
-    lastRight[spot.dir] = spot.r.x + w;
-    placed.push(spot.r);
-    lab.style.left = spot.r.x + 'px';
-    lab.style.top = spot.r.y + 'px';
-
-    // arrow from the label edge to the fill point
-    const below = spot.r.y > a.y;
-    const sx = Math.min(Math.max(a.x, spot.r.x + 12), spot.r.x + w - 12);
-    const sy = below ? spot.r.y : spot.r.y + h;
-    const dx = a.x - sx, dy = a.y - sy, len = Math.hypot(dx, dy) || 1;
-    const ex = a.x - dx / len * 8, ey = a.y - dy / len * 8;
-    const mid = 'm' + e.n;
-    const marker = document.createElementNS(NS, 'marker');
-    marker.setAttribute('id', mid); marker.setAttribute('viewBox', '0 0 10 10');
-    marker.setAttribute('refX', 8); marker.setAttribute('refY', 5);
-    marker.setAttribute('markerWidth', 7); marker.setAttribute('markerHeight', 7); marker.setAttribute('orient', 'auto');
-    const tip = document.createElementNS(NS, 'path');
-    tip.setAttribute('d', 'M0,0 L10,5 L0,10 z'); tip.setAttribute('fill', accent);
-    marker.appendChild(tip); defs.appendChild(marker);
-    const line = document.createElementNS(NS, 'line');
-    line.setAttribute('x1', sx); line.setAttribute('y1', sy); line.setAttribute('x2', ex); line.setAttribute('y2', ey);
-    line.setAttribute('stroke', accent); line.setAttribute('stroke-width', 2);
-    line.setAttribute('marker-end', `url(#${mid})`);
-    svg.appendChild(line);
+    if (by === null) { by = Math.min(Math.max(y + dir * 40, R + 2), paneH - R - 2); }
+    placed.push({x: bx, y: by});
+    el('line', {x1: bx, y1: by - dir * R, x2: x, y2: y, stroke: color, 'stroke-width': 2, 'stroke-dasharray': '3 3'});
+    el('circle', {cx: x, cy: y, r: 5.5, fill: m.is_buy ? C.buy : C.sell, stroke: '#fff', 'stroke-width': 1.5});
+    el('circle', {cx: bx, cy: by, r: R, fill: '#131722', stroke: color, 'stroke-width': 2.5});
+    const t = el('text', {x: bx, y: by + 6, 'text-anchor': 'middle', fill: '#fff', 'font-size': 17, 'font-weight': 700});
+    t.textContent = m.n;
   }
   window.__ready = true;
 }
-requestAnimationFrame(() => requestAnimationFrame(layout));
+requestAnimationFrame(() => requestAnimationFrame(draw));
 </script>
 </body></html>

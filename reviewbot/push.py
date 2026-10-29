@@ -9,6 +9,12 @@ import requests
 
 
 def send_discord(webhook_url: str, content: str, images: list[Path]) -> None:
+    """Discord takes at most 10 files per message, so longer days go out as several messages."""
+    for i in range(0, max(len(images), 1), 10):
+        _send(webhook_url, content if i == 0 else "", images[i:i + 10])
+
+
+def _send(webhook_url: str, content: str, images: list[Path]) -> None:
     payload = {"content": content[:1900], "allowed_mentions": {"parse": []}}
     for attempt in range(4):
         handles = [open(p, "rb") for p in images]

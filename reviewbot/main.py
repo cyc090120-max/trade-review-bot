@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo
 
 from . import sample, tradovate
 from .card import render_card
-from .chart import render_chart
+from .chart import render_htf, render_overview, render_trade
+from .context import describe_events, describe_levels
 from .config import load_config
 from .events import build_events, describe_day
 from .gemini_review import EventComment, Review, build_prompt, demo_review, run_review
@@ -42,7 +43,8 @@ def get_bars(cfg: dict, day: str, symbols: list[str], demo: bool) -> tuple[dict[
     out, problems = {}, []
     for sym in symbols:
         try:
-            out[sym] = load_sample(cfg["_root"]) if demo else fetch_day(sym, day, s["timezone"], s["start"], s["end"])
+            out[sym] = (load_sample(cfg["_root"]) if demo
+                        else fetch_day(sym, day, s["timezone"], s["start"], s["end"], cfg.get("levels")))
         except Exception as e:  # the review still goes out, just without this chart
             problems.append(f"{sym} 行情获取失败：{e}")
     return out, problems
@@ -91,14 +93,21 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
         warn = check_fills_in_range(db, [e.price for e in events if e.symbol == sym])
         if warn:
             problems.append(f"{sym} {warn}")
+        if db.note and not demo:
+            problems.append(f"{sym} {db.note}")
+    charted = [t for t in trades if t.symbol in bars]
 
-    # 1) plain charts with numbered fills, for Gemini to look at
-    def chart_for(sym: str, review: Review | None, name: str) -> Path:
-        sym_events = [e for e in events if e.symbol == sym]
-        return render_chart(root, out_dir / f"{name}_{sym}.png", day=day, day_bars=bars[sym], events=sym_events,
-                            trades=trades, review=review, tz=tz)
-
-    plain = [chart_for(sym, None, "plain") for sym in bars]
+    # 1) pictures Gemini looks at: the 1-hour background before the open, the day's 5 minutes,
+    #    and a close-up of every trade (numbers only, no comments yet)
+    htf = [render_htf(root, out_dir / f"htf_{sym}.png", day=day, db=db) for sym, db in bars.items() if db.htf]
+    overview = [render_overview(root, out_dir / f"overview_{sym}.png", day=day, db=db, events=events,
+                                trades=trades, tz=tz) for sym, db in bars.items()]
+    plain = [render_trade(root, out_dir / f"plain_trade{t.n}.png", day=day, db=bars[t.symbol], trade=t,
+                          events=events, review=None, tz=tz) for t in charted]
+    image_list = "\n".join(
+        [f"- 第{i}张：{p.stem.split('_')[1]} 1 小时图，开盘前的大周期背景" for i, p in enumerate(htf, 1)]
+        + [f"- 第{len(htf) + i}张：{p.stem.split('_')[1]} 当天 5 分钟总览" for i, p in enumerate(overview, 1)]
+        + [f"- 第{len(htf) + len(overview) + i}张：第{t.n}笔的特写" for i, t in enumerate(charted, 1)])
 
     # 2) review
     if offline or not cfg["gemini_api_key"]:
@@ -107,19 +116,24 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
         review, model_name = demo_review(root), "示例复盘（未调用 Gemini）"
     else:
         chat = get_chat_knowledge(cfg, day, demo) or "（今天没有）"
-        prompt = build_prompt(root / cfg["prompt_file"],
-                              {"DATE": day, "STATS": stats_text, "TRADES": day_text, "CHAT_KNOWLEDGE": chat})
+        prompt = build_prompt(root / cfg["prompt_file"], {
+            "DATE": day, "STATS": stats_text, "TRADES": day_text, "CHAT_KNOWLEDGE": chat, "IMAGES": image_list,
+            "LEVELS": "\n\n".join(describe_levels(db) for db in bars.values()),
+            "EVENT_CONTEXT": describe_events(trades, events, bars, tz),
+        })
         (out_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
-        review = run_review(cfg, prompt, [p.read_bytes() for p in plain])
+        review = run_review(cfg, prompt, [p.read_bytes() for p in htf + overview + plain])
         model_name = cfg["gemini"]["review_model"]
     review = complete_review(review, [e.n for e in events])
     (out_dir / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
 
-    # 3) final images: charts with comments next to the candles, then the summary card
-    charts = [chart_for(sym, review, "chart") for sym in bars]
+    # 3) final images: summary card, overview, background, then each trade with its comments
+    closeups = [render_trade(root, out_dir / f"trade{t.n}.png", day=day, db=bars[t.symbol], trade=t,
+                             events=events, review=review, tz=tz) for t in charted]
     card = render_card(root, out_dir / "card.png", day=day, trades=trades, stats=stats,
                        review=review, model_name=model_name, tz=tz)
-    print(f"已生成：{', '.join(str(p) for p in charts + [card])}")
+    images = [card] + overview + htf + closeups
+    print(f"已生成：{', '.join(str(p) for p in images)}")
     for msg in problems:
         print("注意：" + msg)
 
@@ -129,7 +143,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
                 f"{stats['total_usd']:+,.2f} 美元 · {review.one_line}")
         if problems:
             text += "\n" + "\n".join(f"⚠️ {m}" for m in problems)
-        send_discord(webhook, text, charts + [card])
+        send_discord(webhook, text, images)
         print("已推送到 Discord")
     return 0
 

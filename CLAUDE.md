@@ -54,6 +54,7 @@
 | `reviewbot/push.py` | Discord webhook 发图 |
 | `login.sh` + `reviewbot/login.py` | **在 Mac 上运行**：用真 Chrome（独立 profile `secrets/mac-profile`）手动登录，按网站分别保存 `secrets/<site>_state.json`（cookie+localStorage，Tradovate 含 IndexedDB）、`_session.json`（sessionStorage）、`_info.json`（只记键名，用来分析登录存在哪），再 scp 到服务器并检查。服务器地址在 Mac 的 `.env`（`SERVER_SSH` 等） |
 | `reviewbot/tradovate.py` | `session()` 打开一次 Tradovate 网页：当天成交（`user/syncrequest`，按天缓存到 `data/fills/`，美东 18:00 换日）+ **K 线**（钩住网页自己的行情 websocket 发 `md/getchart`，交易的那个合约，1m/5m/60m/日线，`md/cancelchart` 收尾）。补跑旧日期时 session 可选，失败就全用 Yahoo |
+| `reviewbot/orders.py` | **真实止损/止盈**：Tradovate 委托单记录（order / orderVersion / command / executionReport，版本 id = 指令 id → 时间）。每笔：进场后 30 秒内的止损和止盈（风险点数、盈亏比、R）、之后每次移动（收紧/放宽）、出场方式（止损单 / 限价 / 市价）。`tradovate.fetch_orders` 通过网页登录调 REST 只读接口，按天缓存 `data/orders/`（周六还能查到周五的） |
 | `reviewbot/session.py` | 服务器端：`open_page(root, site)` 带登录打开无头页面（第 3、4 步用它）；`check`/`require` 判断登录是否有效，有效时把刷新后的 cookie 写回；`python -m reviewbot.session check` 失效时推送提醒 |
 | `reviewbot/sample.py`, `samples/` | 示例数据（`--demo`），成交价取自示例 K 线 |
 | `install.sh`, `run.sh`, `deploy/` | Ubuntu/Debian 一键安装，systemd 定时 `Mon..Fri 16:15 America/New_York` |
@@ -65,6 +66,7 @@
 - ✅ Mac 登录工具 + 服务器登录检查。Tradovate token 约 80 分钟过期且**过期后网页无法恢复**，所以 `review-bot-keepalive.timer` 每 20 分钟调用 `/v1/auth/renewaccesstoken` 续期（失效只提醒一次，标记文件 `secrets/tradovate_alerted`）。服务器断网超过约 80 分钟就要用户重新 `./login.sh tradovate`。
 - ✅ Tradovate 成交抓取：2026-10-29 用真实成交跑通全流程（MES 14 次进出场，字段与官方文档一致），已推送。
 - ✅ 2026-10-31 第一次全自动运行成功（复盘 10/30，18 笔 MES+MNQ），Tradovate 续期从 10/30 起一直有效。
+- ✅ 真实止损读取（2026-10-31）：交给 AI 评价止损位置和移动；单笔图画止损（移动时是台阶）和止盈；卡片加风险、R 两列。成交缓存里现在带 `order_id`（判断出场方式用）。
 - ✅ 两个定时任务已在服务器启用：`review-bot.timer`（Mon..Fri 16:15 ET）、`review-bot-keepalive.timer`（每 20 分钟）。
 - ✅ SMC 版（2026-10-30）：`smc.py` 按 LuxAlgo 概念库的定义算 FVG/IFVG/OB/CISD（ICT 没有官方定义，取引用最多的公开版本，每项只用一种约定：FVG 实体收穿对侧变 IFVG；OB = 位移前最后一根反向 K 线、含影线、位移=留 FVG 且打穿前 10 根极值；CISD = 进场前最近 10 根里推到极值那段连续同向 K 线的第一根开盘价，实体收破才算）。另有 NDOG/NWOG/开盘缺口、EQH/EQL、ICT 亚盘 20–00 / 伦敦 02–05。1m 特写画 1m FVG/OB。已删除溢价折价、时段窗口、MSS。
 - ✅ 复盘改版（2026-10-30）：站在当时评价 + 多周期关键位 + 1m 特写。用 10/29 真实数据在服务器上跑过并推送，点评能认出扫流动性反转、关键位止盈、1m 不对劲离场。
@@ -72,8 +74,7 @@
 
 ## 下一步（按顺序）
 1. **Discord 读取**：用 `session.open_page(root, "discord")` 打开那个频道，往上翻到当天开盘前，提取文字（作者、时间、内容）。用 Gemini Flash-Lite 筛出与行情或交易相关的观点，填入 `{{CHAT_KNOWLEDGE}}`。可以顺便积累到长期知识库文件。这和用户的另一个项目"蒸馏夜航社交易员 junkman 的交易思路"可以共用。先对着真实页面看结构再写，选择器不要凭空猜。
-2. **从 Tradovate 读真实止损/止盈**：同步数据里有 `orders`/`orderVersions`，先看真实结构，再把每笔的止损位置交给 AI。
-3. **提示词细调**（用户说先放后面）：还没问完的有止损规则、出场规则、不做的情况、点评风格（要不要打分）。用户以后自己改 `prompts/review.md`。
+2. **提示词细调**（用户说先放后面）：还没问完的有止损规则、出场规则、不做的情况、点评风格（要不要打分）。用户以后自己改 `prompts/review.md`。
 
 ## 常用命令
 ```bash

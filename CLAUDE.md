@@ -53,7 +53,7 @@
 | `reviewbot/card.py` + `templates/card.html.j2` | 总结卡片：盈亏表、当日环境、评分汇总、群聊观点、明日要点 |
 | `reviewbot/push.py` | Discord webhook 发图 |
 | `login.sh` + `reviewbot/login.py` | **在 Mac 上运行**：用真 Chrome（独立 profile `secrets/mac-profile`）手动登录，按网站分别保存 `secrets/<site>_state.json`（cookie+localStorage，Tradovate 含 IndexedDB）、`_session.json`（sessionStorage）、`_info.json`（只记键名，用来分析登录存在哪），再 scp 到服务器并检查。服务器地址在 Mac 的 `.env`（`SERVER_SSH` 等） |
-| `reviewbot/tradovate.py` | 当天成交：监听网页版 `user/syncrequest`，解析 fills，按天缓存到 `data/fills/`（Tradovate 只给当前交易日，美东 18:00 换日） |
+| `reviewbot/tradovate.py` | `session()` 打开一次 Tradovate 网页：当天成交（`user/syncrequest`，按天缓存到 `data/fills/`，美东 18:00 换日）+ **K 线**（钩住网页自己的行情 websocket 发 `md/getchart`，交易的那个合约，1m/5m/60m/日线，`md/cancelchart` 收尾）。补跑旧日期时 session 可选，失败就全用 Yahoo |
 | `reviewbot/session.py` | 服务器端：`open_page(root, site)` 带登录打开无头页面（第 3、4 步用它）；`check`/`require` 判断登录是否有效，有效时把刷新后的 cookie 写回；`python -m reviewbot.session check` 失效时推送提醒 |
 | `reviewbot/sample.py`, `samples/` | 示例数据（`--demo`），成交价取自示例 K 线 |
 | `install.sh`, `run.sh`, `deploy/` | Ubuntu/Debian 一键安装，systemd 定时 `Mon..Fri 16:15 America/New_York` |
@@ -90,7 +90,7 @@ tail -50 output/run.log
 - 标注层 `#ov` 必须 `z-index:20`，否则会被图表画布盖住。
 - 渲染 HTML 时传给 Playwright 的必须是绝对路径。
 - Gemini 可能漏掉编号或多编号，`main.complete_review` 会补齐并去掉多余的，别删。
-- Yahoo 用主力连续合约，换月那一周成交价可能和 K 线对不上，推送里会出现提示。
+- **K 线优先用 Tradovate**（2026-10-31 起）。Yahoo 只是后备：它会在缺数据后用前一天收盘价当开盘价，画出一根假的超长 K 线并把整张图压扁（10/30 15:03 就是），`market.clean()` 会修正这种坏数据；Yahoo 用主力连续合约，换月那一周可能和成交价对不上。用户以为是"AI 画图的问题"——图是代码画的，AI 只写点评。
 - 服务器需要中文字体（`fonts-noto-cjk`），`install.sh` 已经装了。
 - 用户的路由器会断开约 60 秒没有输出的 SSH 连接。耗时命令（安装、pip）用 `nohup ... &` 在服务器后台跑，SSH 加 `-o ServerAliveInterval=15`。
 - 仓库是公开的：服务器地址、端口、密码一类信息不要写进仓库文件。

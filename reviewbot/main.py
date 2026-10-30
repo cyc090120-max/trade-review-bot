@@ -13,6 +13,7 @@ comments next to the candles + summary card -> Discord.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import sys
 import traceback
 from datetime import datetime
@@ -31,20 +32,24 @@ from .push import send_discord, send_text
 from .trades import day_stats, describe_stats, filter_session, pair_trades
 
 
-def get_fills(cfg: dict, day: str, demo: bool):
+def get_fills(cfg: dict, day: str, demo: bool, tv):
     if demo:
         return sample.sample_fills()
     # 登录失效时抛出 LoginExpired，出错消息会推送到 Discord 提醒重新登录
-    return tradovate.fetch_fills(cfg["_root"], day, cfg["session"]["timezone"])
+    return tradovate.fetch_fills(cfg["_root"], day, cfg["session"]["timezone"], tv)
 
 
-def get_bars(cfg: dict, day: str, symbols: list[str], demo: bool) -> tuple[dict[str, DayBars], list[str]]:
+def get_bars(cfg: dict, day: str, symbols: list[str], demo: bool, tv=None,
+             contracts: dict[str, str] | None = None) -> tuple[dict[str, DayBars], list[str]]:
     s = cfg["session"]
+    zone = ZoneInfo(s["timezone"])
     out, problems = {}, []
     for sym in symbols:
+        contract = (contracts or {}).get(sym)
+        source = ((lambda iv, a, b, c=contract: tv.bars(c, iv, a, b, zone)) if tv and contract else None)
         try:
             out[sym] = (load_sample(cfg["_root"]) if demo
-                        else fetch_day(sym, day, s["timezone"], s["start"], s["end"], cfg.get("levels")))
+                        else fetch_day(sym, day, s["timezone"], s["start"], s["end"], cfg.get("levels"), source))
         except Exception as e:  # the review still goes out, just without this chart
             problems.append(f"{sym} 行情获取失败：{e}")
     return out, problems
@@ -73,22 +78,25 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     webhook = cfg["discord_webhook_url"] if push else ""
 
-    trades = pair_trades(get_fills(cfg, day, demo), cfg["point_value"], cfg.get("commission_per_side", 0))
-    trades = filter_session(trades, tz, cfg["session"]["start"], cfg["session"]["end"])
-    stats = day_stats(trades)
+    # one Tradovate page for both fills and bars; for a re-run whose fills are cached it is optional
+    live = not demo and not tradovate.has_cache(root, day, tz)
+    with (nullcontext() if demo else tradovate.session(root, optional=not live)) as tv:
+        trades = pair_trades(get_fills(cfg, day, demo, tv), cfg["point_value"], cfg.get("commission_per_side", 0))
+        trades = filter_session(trades, tz, cfg["session"]["start"], cfg["session"]["end"])
+        stats = day_stats(trades)
 
-    if not trades:
-        print(f"{day} 盘中没有交易。")
-        if webhook and cfg.get("no_trade_action") == "notify":
-            send_text(webhook, f"📭 {day} 美股盘中没有交易，今天不复盘。")
-        return 0
+        if not trades:
+            print(f"{day} 盘中没有交易。")
+            if webhook and cfg.get("no_trade_action") == "notify":
+                send_text(webhook, f"📭 {day} 美股盘中没有交易，今天不复盘。")
+            return 0
+        bars, problems = get_bars(cfg, day, stats["symbols"], demo, tv, {t.symbol: t.contract for t in trades})
 
     events = build_events(trades)
     day_text = describe_day(trades, events, tz)
     stats_text = describe_stats(stats)
     (out_dir / "trades.txt").write_text(stats_text + "\n\n" + day_text, encoding="utf-8")
 
-    bars, problems = get_bars(cfg, day, stats["symbols"], demo)
     for sym, db in bars.items():
         warn = check_fills_in_range(db, [e.price for e in events if e.symbol == sym])
         if warn:

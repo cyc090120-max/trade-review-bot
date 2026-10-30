@@ -140,15 +140,31 @@ def _window(bars: list[Bar], start: datetime, end: datetime) -> list[Bar]:
     return [b for b in bars if start <= b.t < end]
 
 
-def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | None = None) -> DayBars:
+def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | None = None,
+              source=None) -> DayBars:
+    """source(interval, start, end) -> bars from the broker (Tradovate) for the traded contract; Yahoo
+    is the fallback for anything it can't give."""
     lv = lv or {}
     zone = ZoneInfo(tz)
     d = date.fromisoformat(day)
+    fallbacks: list[str] = []
+
+    def get(interval: str, a: date, b: date) -> list[Bar]:
+        if source:
+            try:
+                got = source(interval, a, b)
+                if got:
+                    return clean(got)
+            except Exception as e:  # noqa: BLE001 - any broker hiccup falls back to Yahoo
+                print(f"{symbol} {interval} 从 Tradovate 取 K 线失败：{e}")
+            fallbacks.append(interval)
+        return _history(symbol, a, b, interval, zone)
+
     s, e = time.fromisoformat(start), time.fromisoformat(end)
     open_dt = datetime.combine(d, s, zone)
     evening = datetime.combine(d - timedelta(days=1), time(18, 0), zone)
 
-    r5 = _history(symbol, d - timedelta(days=7), d + timedelta(days=1), "5m", zone)
+    r5 = get("5m", d - timedelta(days=7), d + timedelta(days=1))
     if not r5:
         raise RuntimeError(f"拿不到 {symbol} 的 5 分钟行情（Yahoo 返回空数据）")
     rth = [b for b in r5 if b.t.date() == d and s <= b.t.time() < e]
@@ -178,9 +194,9 @@ def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | N
 
     # unbroken swing highs / lows on each timeframe, as of the open
     before_open5 = [b for b in r5 if b.t < open_dt]
-    r60 = _history(symbol, d - timedelta(days=60), d + timedelta(days=1), "60m", zone)
+    r60 = get("60m", d - timedelta(days=60), d + timedelta(days=1))
     before_open60 = [b for b in r60 if b.t + timedelta(hours=1) <= open_dt]
-    daily = _history(symbol, d - timedelta(days=400), d + timedelta(days=1), "1d", zone)
+    daily = get("1d", d - timedelta(days=400), d + timedelta(days=1))
     before_today = [b for b in daily if b.t.date() < d]
     zones: list[dict] = []
     first_open = rth[0].o
@@ -218,7 +234,7 @@ def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | N
     if last_week:
         pairs += [("前周高 PWH", max(b.h for b in last_week)), ("前周低 PWL", min(b.l for b in last_week))]
 
-    r1 = _history(symbol, d, d + timedelta(days=1), "1m", zone)
+    r1 = get("1m", d - timedelta(days=1), d + timedelta(days=1))
     day1 = [b for b in r1 if b.t.date() == d and time(8, 0) <= b.t.time() < e]
 
     # round numbers, on the futures price or (MES) on the SPX cash index moved by the basis
@@ -248,7 +264,8 @@ def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | N
                    bars1=[_as_dict(b, tz) for b in day1], vwap=vwap,
                    htf=[_as_dict(b, tz) for b in before_open60[-24 * 5:]], gap=gap, zones=zones,
                    basis=basis, index_name=index_name,
-                   note="" if day1 else "拿不到 1 分钟行情（Yahoo 只保留最近约 30 天）")
+                   note=("" if day1 else "拿不到 1 分钟行情（Yahoo 只保留最近约 30 天）")
+                        + (f"Tradovate 没给 {'/'.join(fallbacks)} K 线，这部分用的是 Yahoo" if source and fallbacks else ""))
 
 
 def check_fills_in_range(day_bars: DayBars, prices: list[float]) -> str:

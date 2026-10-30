@@ -10,13 +10,15 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .card import WEEKDAYS, launch_chromium, verdict_class
+from .context import visible_zones
 from .events import Event
 from .gemini_review import Review
 from .market import DayBars, wall_epoch
 from .trades import Trade
 
 LEVEL_COLORS = [("前周", "#e91e63"), ("前日", "#f7a600"), ("隔夜", "#9c6ade"), ("亚盘", "#9c6ade"), ("伦敦", "#9c6ade"),
-                ("日线", "#26c6da"), ("4H", "#26c6da"), ("1H", "#4dd0e1"), ("15m", "#80cbc4"), ("整数", "#6b6f7d")]
+                ("等高", "#ffeb3b"), ("等低", "#ffeb3b"), ("日线", "#26c6da"), ("4H", "#26c6da"), ("1H", "#4dd0e1"),
+                ("15m", "#80cbc4"), ("整数", "#6b6f7d"), ("SPX", "#6b6f7d"), ("NDX", "#6b6f7d")]
 VCLASS = {"b-good": "good", "b-mid": "mid", "b-bad": "bad"}
 
 
@@ -31,6 +33,21 @@ def _levels(db: DayBars, bars: list[dict]) -> tuple[list[dict], list[float]]:
             out.append({"name": name.split(" / ")[0] + (" 等" if " / " in name else ""), "price": p,
                         "color": color, "width": 2 if " / " in name else 1})
     return out, [l["price"] for l in out]
+
+
+def _zones(zones: list[dict], bars: list[dict]) -> list[dict]:
+    """FVGs / gaps overlapping the visible range, drawn from where they formed to the right edge."""
+    lo, hi = min(b["low"] for b in bars), max(b["high"] for b in bars)
+    times = [b["time"] for b in bars]
+    out = []
+    for z in zones:
+        if z["hi"] < lo or z["lo"] > hi or z["start"] > times[-1]:
+            continue
+        if z["hi"] - z["lo"] > (hi - lo) * 0.35:  # a box covering most of the chart hides more than it shows
+            continue
+        start = next(t for t in times if t >= z["start"]) if z["start"] >= times[0] else times[0]
+        out.append({**z, "start": start})
+    return out
 
 
 def _markers(events: list[Event], bars: list[dict], step: int, review: Review | None, tz: str) -> list[dict]:
@@ -50,7 +67,8 @@ def _markers(events: list[Event], bars: list[dict], step: int, review: Review | 
 
 
 def _render(root: Path, out_png: Path, *, width: int, chart_height: int, title: str, sub: str,
-            bars: list[dict], db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict]) -> Path:
+            bars: list[dict], db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict],
+            zones: list[dict]) -> Path:
     from playwright.sync_api import sync_playwright
 
     levels, extra = _levels(db, bars)
@@ -60,6 +78,7 @@ def _render(root: Path, out_png: Path, *, width: int, chart_height: int, title: 
         lib_uri=(root / "reviewbot/vendor/lightweight-charts.standalone.production.js").as_uri(),
         bars_json=json.dumps(bars), vwap_json=json.dumps(vwap), levels_json=json.dumps(levels, ensure_ascii=False),
         scale_extra_json=json.dumps(extra), markers_json=json.dumps(markers),
+        zones_json=json.dumps(_zones(zones, bars), ensure_ascii=False),
     )
     out_png.parent.mkdir(parents=True, exist_ok=True)
     out_png = out_png.resolve()
@@ -86,19 +105,20 @@ def _pnl(usd: float) -> str:
 def render_overview(root: Path, out_png: Path, *, day: str, db: DayBars, events: list[Event],
                     trades: list[Trade], tz: str) -> Path:
     closed = [t for t in trades if t.symbol == db.symbol and not t.is_open]
-    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线是 VWAP · "
+    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线 VWAP · 色块是 FVG / 缺口 · "
            f"{len(closed)} 笔合计 {_pnl(sum(t.pnl_usd for t in closed))} 美元")
     vwap5 = [v for v in db.vwap if v["time"] % 300 == 240]  # VWAP at the close of each 5-minute bar
     vwap5 = [{"time": v["time"] - 240, "value": v["value"]} for v in vwap5]
     return _render(root, out_png, width=1200, chart_height=640, title=f"{db.symbol} 全天 5 分钟", sub=sub,
                    bars=db.bars, db=db, vwap=vwap5,
-                   markers=_markers([e for e in events if e.symbol == db.symbol], db.bars, 300, None, tz), items=[])
+                   markers=_markers([e for e in events if e.symbol == db.symbol], db.bars, 300, None, tz), items=[],
+                   zones=db.zones)
 
 
 def render_htf(root: Path, out_png: Path, *, day: str, db: DayBars) -> Path:
     return _render(root, out_png, width=1200, chart_height=640, title=f"{db.symbol} 1 小时 · 开盘前的大周期",
                    sub=f"最近 5 个交易日，截至 {_date_label(day)} 09:30 ET · 虚线是开盘前已知的关键位",
-                   bars=db.htf, db=db, vwap=[], markers=[], items=[])
+                   bars=db.htf, db=db, vwap=[], markers=[], items=[], zones=db.zones)
 
 
 def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Trade, events: list[Event],
@@ -131,4 +151,5 @@ def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Tra
                           "verdict": c.verdict, "vclass": VCLASS[verdict_class(c.verdict)], "tag": c.tag,
                           "comment": c.comment, "hindsight": c.hindsight})
     return _render(root, out_png, width=900, chart_height=520, title=title, sub=sub, bars=bars, db=db, vwap=vwap,
-                   markers=_markers(evs, bars, step, review, tz), items=items)
+                   markers=_markers(evs, bars, step, review, tz), items=items,
+                   zones=visible_zones(db, wall_epoch(end, tz)))

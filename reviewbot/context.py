@@ -1,19 +1,26 @@
 """What the trader could see at the moment of each entry / exit, worked out from the data with no
-hindsight: where price sat between the levels, which level was just swept, how the 1-minute bars
-behaved. What happened afterwards is listed separately and marked as reference only."""
+hindsight, in ICT / SMC terms: where price sat between the levels and fair value gaps, premium or
+discount, which liquidity was just swept, whether the 1-minute chart shifted structure with
+displacement, which session window it was. What happened afterwards is listed separately and
+marked as reference only."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from .events import Event
-from .market import DayBars, merge_levels, open_swings, wall_epoch
+from .market import DayBars, merge_levels, nearest_zones, open_fvgs, open_swings, wall_epoch
 from .trades import Trade
 
 SWEEP_LOOKBACK_MIN = 20
 PRE_BARS = 12
 HINDSIGHT_MIN = 30
 HI, LO = (lambda b: b["high"]), (lambda b: b["low"])
+# ICT session windows during the US cash session (ET)
+WINDOWS = [("09:30", "10:00", "NY AM 开盘半小时"), ("10:00", "11:00", "NY AM 银弹窗口 10–11 点"),
+           ("11:00", "12:00", "NY AM 尾段"), ("12:00", "13:30", "午休时段（NY Lunch）"),
+           ("13:30", "14:00", "NY PM 开始"), ("14:00", "15:00", "NY PM 银弹窗口 14–15 点"),
+           ("15:00", "16:00", "收盘前一小时")]
 
 
 def _hm(epoch: int) -> str:
@@ -46,6 +53,76 @@ def visible_levels(db: DayBars, t: int) -> dict[str, float]:
     if vw:
         pairs.append(("VWAP", vw[-1]["value"]))
     return merge_levels(pairs)
+
+
+def visible_zones(db: DayBars, t: int) -> list[dict]:
+    """Pre-open FVGs / gaps not yet traded through by time t, plus 5m FVGs the session has made."""
+    done5 = [b for b in db.bars if b["time"] + 300 <= t]
+    out = []
+    for z in db.zones:
+        later = [b for b in done5 if b["time"] >= z["start"]]
+        if z["kind"] == "bull" and any(LO(b) <= z["lo"] for b in later):
+            continue
+        if z["kind"] == "bear" and any(HI(b) >= z["hi"] for b in later):
+            continue
+        out.append(z)
+    for kind, lo, hi, b in open_fvgs(done5, hi=HI, lo=LO):
+        out.append({"name": f"5m {'看涨' if kind == 'bull' else '看跌'} FVG({_hm(b['time'])})", "kind": kind,
+                    "lo": lo, "hi": hi, "start": b["time"]})
+    return out
+
+
+def _zones_text(zones: list[dict], price: float) -> str:
+    near = nearest_zones([(z["name"], z["lo"], z["hi"]) for z in zones], price)
+    if not near:
+        return "附近没有未回补的 FVG / 缺口"
+    def where(lo, hi):
+        return "价格在区内" if lo <= price <= hi else (f"在上方 {lo - price:+.2f}" if lo > price else f"在下方 {hi - price:+.2f}")
+    return "；".join(f"{n} {lo:.2f}–{hi:.2f}（{where(lo, hi)}）" for n, lo, hi in near)
+
+
+def _premium_discount(db: DayBars, bars: list[dict], t: int, price: float) -> str:
+    rth = [b for b in bars if b["time"] >= db.bars[0]["time"] and b["time"] + 60 <= t]
+    if len(rth) < 15:  # too early in the session: use the overnight range
+        on = {k: p for k, p in db.levels.items() if "隔夜" in k}
+        hi = max([p for k, p in on.items() if "高" in k] + [HI(b) for b in rth], default=None)
+        lo = min([p for k, p in on.items() if "低" in k] + [LO(b) for b in rth], default=None)
+        src = "隔夜 + 开盘区间"
+    else:
+        hi, lo, src = max(HI(b) for b in rth), min(LO(b) for b in rth), "今日盘中区间"
+    if hi is None or lo is None or hi <= lo:
+        return ""
+    pct = (price - lo) / (hi - lo) * 100
+    zone = "溢价区" if pct > 50 else "折价区"
+    return f"{src} {lo:.2f}–{hi:.2f}，价格在 {pct:.0f}% 位置（{zone}，50% 平衡位 {(hi + lo) / 2:.2f}）"
+
+
+def _mss(bars: list[dict], t: int, short: bool) -> str:
+    """After the extreme of the last 20 minutes, did a 1m candle close through the last swing point
+    that formed before it (market structure shift), and with a big body (displacement)?"""
+    win = [b for b in bars if t - SWEEP_LOOKBACK_MIN * 60 <= b["time"] and b["time"] + 60 <= t]
+    if len(win) < 5:
+        return ""
+    ext = max(range(len(win)), key=lambda i: HI(win[i])) if short else min(range(len(win)), key=lambda i: LO(win[i]))
+    pivots = [i for i in range(1, ext) if (LO(win[i]) < LO(win[i - 1]) and LO(win[i]) <= LO(win[i + 1]) if short
+                                           else HI(win[i]) > HI(win[i - 1]) and HI(win[i]) >= HI(win[i + 1]))]
+    word = "高点" if short else "低点"
+    if not pivots:
+        return f"前 20 分钟的{word} {_hm(win[ext]['time'])} 之前没有可参照的 1 分钟结构点，谈不上 MSS"
+    level = LO(win[pivots[-1]]) if short else HI(win[pivots[-1]])
+    avg_body = sum(abs(b["close"] - b["open"]) for b in win) / len(win)
+    for b in win[ext + 1:]:
+        if (b["close"] < level) if short else (b["close"] > level):
+            disp = "，带位移（大实体）" if abs(b["close"] - b["open"]) >= 1.5 * avg_body else "，实体不大"
+            return (f"{_hm(win[ext]['time'])} 做出{word}后，{_hm(b['time'])} 1 分钟收{'破' if short else '上'}"
+                    f" {_hm(win[pivots[-1]]['time'])} 的结构点 {level:.2f}，出现 MSS{disp}")
+    return (f"{_hm(win[ext]['time'])} 做出{word}后，1 分钟还没有收{'破' if short else '上'}"
+            f"结构点 {level:.2f}（{_hm(win[pivots[-1]]['time'])}），没有 MSS")
+
+
+def _window_name(t: int) -> str:
+    hm = _hm(t)
+    return next((name for a, b, name in WINDOWS if a <= hm < b), "")
 
 
 def _nearest(levels: dict[str, float], price: float, n: int = 3) -> str:
@@ -102,7 +179,20 @@ def describe_events(trades: list[Trade], events: list[Event], bars: dict[str, Da
                  f"  - 价格位置：{_nearest(visible_levels(db, t), ev.price)}"]
         sweeps = _sweeps(db, bars_, t) if one_min else []
         lines.append(f"  - 前 {SWEEP_LOOKBACK_MIN} 分钟的流动性扫荡：" + ("；".join(sweeps) if sweeps else "没有"))
+        lines.append(f"  - FVG / 缺口：{_zones_text(visible_zones(db, t), ev.price)}")
+        pd_ = _premium_discount(db, bars_, t, ev.price)
+        if pd_:
+            lines.append(f"  - 溢价 / 折价：{pd_}")
+        if db.basis and db.index_name:
+            bs = [x["value"] for x in db.basis if x["time"] + 60 <= t][-1:] or [db.basis[0]["value"]]
+            cash = ev.price - bs[0]
+            lines.append(f"  - 对应 {db.index_name} 约 {cash:.2f}（基差 {bs[0]:+.2f}）")
+        lines.append(f"  - 时段：{_window_name(t) or '盘中'}")
         if ev.role in ("进场", "加仓"):
+            short = (ev.side.lower().startswith("s"))
+            mss = _mss(bars_, t, short) if one_min else ""
+            if mss:
+                lines.append(f"  - 1 分钟结构：{mss}")
             pre = done[-PRE_BARS:]
             lines.append(f"  - 出手前 {len(pre)} 根{'1' if one_min else '5'}分钟 K 线（开/高/低/收）：")
             lines += [f"    {_ohlc(b)}" for b in pre]

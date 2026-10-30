@@ -24,6 +24,7 @@ class Event:
     qty: int
     price: float
     time: datetime
+    order_id: int | None = None
 
     @property
     def label(self) -> str:
@@ -51,10 +52,10 @@ def build_events(trades: list[Trade]) -> list[Event]:
                 m["qty"] += f.qty
             else:
                 merged.append({"key": key, "role": f.role, "side": f.side, "time": f.time,
-                               "qty": f.qty, "px_qty": f.price * f.qty})
+                               "qty": f.qty, "px_qty": f.price * f.qty, "order_id": f.order_id})
         for m in merged:
             events.append(Event(0, t.n, t.symbol, t.direction, m["role"], m["side"], m["qty"],
-                                round(m["px_qty"] / m["qty"], 2), m["time"]))
+                                round(m["px_qty"] / m["qty"], 2), m["time"], m["order_id"]))
     events.sort(key=lambda e: (e.time, e.trade_n))
     for i, e in enumerate(events, 1):
         e.n = i

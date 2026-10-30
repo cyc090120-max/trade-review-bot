@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 from .events import Event
 from . import smc
 from .market import DayBars, merge_levels, open_swings, wall_epoch
+from .orders import OrderBook, TradeRisk, exit_how
+from .orders import describe as describe_risk
 from .trades import Trade
 
 SWEEP_LOOKBACK_MIN = 20
@@ -108,7 +110,8 @@ def describe_levels(db: DayBars) -> str:
     return out + (f"\n开盘缺口：{db.gap}" if db.gap else "")
 
 
-def describe_events(trades: list[Trade], events: list[Event], bars: dict[str, DayBars], tz: str) -> str:
+def describe_events(trades: list[Trade], events: list[Event], bars: dict[str, DayBars], tz: str,
+                    risks: dict[int, TradeRisk] | None = None, book: OrderBook | None = None) -> str:
     blocks = []
     for ev in events:
         db = bars.get(ev.symbol)
@@ -142,7 +145,22 @@ def describe_events(trades: list[Trade], events: list[Event], bars: dict[str, Da
             pre = done[-PRE_BARS:]
             lines.append(f"  - 出手前 {len(pre)} 根{'1' if one_min else '5'}分钟 K 线（开/高/低/收）：")
             lines += [f"    {_ohlc(b)}" for b in pre]
+            risk = (risks or {}).get(trade.n)
+            if ev.role == "进场" and risk:
+                sign = 1 if trade.direction == "long" else -1
+                plan = []
+                if risk.initial_stop is not None:
+                    plan.append(f"止损 {risk.initial_stop:.2f}（风险 {(ev.price - risk.initial_stop) * sign:.2f} 点/张）")
+                if risk.initial_target is not None:
+                    plan.append(f"止盈 {risk.initial_target:.2f}（目标 {(risk.initial_target - ev.price) * sign:.2f} 点）")
+                lines.append("  - 进场时挂的单：" + ("，".join(plan) if plan else "进场后 30 秒内没有挂止损"))
         else:
+            how = exit_how(book, ev.order_id)
+            if how:
+                lines.append(f"  - 出场方式：{how}")
+            risk = (risks or {}).get(trade.n)
+            if risk and ev.role == "平仓":
+                lines.append(f"  - 这笔的止损记录：{describe_risk(trade, risk, tz)}")
             t0 = wall_epoch(trade.entry_time, tz)
             held = [b for b in done if b["time"] + step > t0]
             if len(held) > 40:  # long holds: show them as 5-minute bars

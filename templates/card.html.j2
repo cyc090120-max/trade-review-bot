@@ -59,7 +59,7 @@
 </div>
 
 <table>
-  <tr><th></th><th>时间</th><th>品种</th><th>方向</th><th class="r">张数</th><th class="r">进场 → 离场</th><th class="r">每张点数</th><th class="r">盈亏 $</th></tr>
+  <tr><th></th><th>时间</th><th>品种</th><th>方向</th><th class="r">张数</th><th class="r">进场 → 离场</th><th class="r">每张点数</th>{% if trades and trades[0].has_risk %}<th class="r">风险</th><th class="r">R</th>{% endif %}<th class="r">盈亏 $</th></tr>
   {% for t in trades %}
   <tr>
     <td class="n">第{{ t.n }}笔</td>
@@ -69,6 +69,8 @@
     <td class="r">{{ t.max_qty }}</td>
     <td class="r">{{ "{:,.2f}".format(t.entry_avg) }} → {{ "{:,.2f}".format(t.exit_avg) if t.exit_avg is not none else "持仓中" }}</td>
     <td class="r {{ 'up' if (t.points_per_contract or 0) > 0 else 'down' }}">{{ "%+.2f"|format(t.points_per_contract) if t.points_per_contract is not none else "—" }}</td>
+    {% if t.has_risk %}<td class="r">{{ "%.2f"|format(t.risk_pts) if t.risk_pts is not none else "无止损" }}</td>
+    <td class="r {{ 'up' if (t.r or 0) > 0 else 'down' }}">{{ "%+.1f"|format(t.r) if t.r is not none else "—" }}</td>{% endif %}
     <td class="r {{ 'up' if t.pnl_usd > 0 else ('down' if t.pnl_usd < 0 else 'flat') }}">{{ "%+.2f"|format(t.pnl_usd) }}</td>
   </tr>
   {% endfor %}

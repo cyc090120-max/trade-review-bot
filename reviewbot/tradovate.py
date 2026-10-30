@@ -90,20 +90,21 @@ def _parse(data: dict[str, list], day: str) -> list[Fill]:
         if f["contractId"] not in names:
             raise RuntimeError(f"Tradovate 成交里有不认识的合约编号 {f['contractId']}")
         fills.append(Fill(datetime.fromisoformat(f["timestamp"].replace("Z", "+00:00")), names[f["contractId"]],
-                          f["action"], int(f["qty"]), float(f["price"])))
+                          f["action"], int(f["qty"]), float(f["price"]), order_id=f.get("orderId")))
     return sorted(fills, key=lambda x: x.time)
 
 
 def _save(path: Path, fills: list[Fill]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    rows = [{"time": f.time.isoformat(), "contract": f.contract, "side": f.side, "qty": f.qty, "price": f.price}
-            for f in fills]
+    rows = [{"time": f.time.isoformat(), "contract": f.contract, "side": f.side, "qty": f.qty, "price": f.price,
+             "order_id": f.order_id} for f in fills]
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def _load(path: Path) -> list[Fill]:
     rows = json.loads(path.read_text(encoding="utf-8"))
-    return [Fill(datetime.fromisoformat(r["time"]), r["contract"], r["side"], r["qty"], r["price"]) for r in rows]
+    return [Fill(datetime.fromisoformat(r["time"]), r["contract"], r["side"], r["qty"], r["price"],
+                 order_id=r.get("order_id")) for r in rows]
 
 
 class Session:
@@ -165,6 +166,45 @@ class Session:
                 out.append(Bar(t, float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"]),
                                float(b.get("upVolume", 0) + b.get("downVolume", 0))))
         return sorted(out, key=lambda x: x.t)
+
+
+    def rest(self, endpoint: str):
+        """GET a Tradovate REST endpoint with the page's own login (read-only)."""
+        return self.page.evaluate("""async (ep) => {
+            const a = JSON.parse(sessionStorage.getItem('api_authenticator_state'));
+            const r = await fetch(`https://${a.apiHosts[a.environment]}/v1/${ep}`, {headers: {Authorization: 'Bearer ' + a.token}});
+            if (!r.ok) throw new Error(ep + ' ' + r.status);
+            return r.json();
+        }""", endpoint)
+
+
+ORDER_ENDPOINTS = {"orders": "order/list", "versions": "orderVersion/list", "commands": "command/list",
+                   "reports": "executionReport/list", "strategies": "orderStrategy/list"}
+
+
+def fetch_orders(root: Path, day: str, tz: str, tv: "Session | None") -> dict:
+    """The day's order records (stops, targets, every modification). Like fills, Tradovate keeps only the
+    latest session, so each day is cached in data/orders/."""
+    cache = root / "data" / "orders" / f"{day}.json"
+    if tv is None or (day != datetime.now(ZoneInfo(tz)).date().isoformat() and cache.exists()):
+        return json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
+    raw = {k: tv.rest(ep) for k, ep in ORDER_ENDPOINTS.items()}
+    zone = ZoneInfo(tz)
+    keep = lambda ts: datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(zone).date().isoformat() == day
+    raw["orders"] = [o for o in raw["orders"] if keep(o["timestamp"])]
+    ids = {o["id"] for o in raw["orders"]}
+    raw["versions"] = [v for v in raw["versions"] if v["orderId"] in ids]
+    raw["commands"] = [c for c in raw["commands"] if c["orderId"] in ids]
+    raw["reports"] = [r for r in raw["reports"] if r["orderId"] in ids]
+    raw["strategies"] = [x for x in raw["strategies"] if keep(x["timestamp"])]
+    cids = sorted({o["contractId"] for o in raw["orders"]})
+    raw["contracts"] = [{"id": c["id"], "name": c["name"]} for c in tv.rest("contract/items?ids=" + ",".join(map(str, cids)))] if cids else []
+    if raw["orders"]:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(raw), encoding="utf-8")
+    elif cache.exists():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    return raw
 
 
 @contextmanager

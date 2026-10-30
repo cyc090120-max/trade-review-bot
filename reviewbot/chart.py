@@ -16,6 +16,7 @@ from .context import visible_zones
 from .events import Event
 from .gemini_review import Lesson, Review
 from .market import DayBars, wall_epoch
+from .orders import TradeRisk
 from .trades import Trade
 
 LEVEL_COLORS = [("前周", "#d81b60"), ("前日", "#ef6c00"), ("隔夜", "#7e57c2"), ("亚盘", "#7e57c2"), ("伦敦", "#7e57c2"),
@@ -100,6 +101,35 @@ def _boxes(trades: list[Trade], bars: list[dict], step: int, tz: str) -> list[di
     return out
 
 
+def _risk_lines(trade: Trade, risk: TradeRisk | None, bars: list[dict], tz: str) -> list[dict]:
+    """Stop / target prices over time as flat segments (a moved stop becomes steps), snapped to the 5-minute
+    bars: several moves inside one bar keep only the last price, and only the first and last segment of each
+    order carry a price label."""
+    if not risk:
+        return []
+    times = [b["time"] for b in bars]
+    end_trade = trade.exit_time or trade.entry_time
+    out, seen = [], set()
+    for leg in risk.stops + risk.targets:
+        stop_at = min(x for x in (leg.end, end_trade) if x is not None)
+        per_bar: dict[int, float] = {}
+        for w, p in leg.steps:
+            if w <= stop_at:
+                per_bar[_snap(times, wall_epoch(max(w, trade.entry_time), tz), 300)] = p
+        starts = sorted(per_bar)
+        end_bar = _snap(times, wall_epoch(stop_at, tz), 300)
+        word = "止损" if leg.kind == "stop" else "止盈"
+        for i, t0 in enumerate(starts):
+            t1 = starts[i + 1] if i + 1 < len(starts) else end_bar
+            key = (leg.kind, t0, t1, per_bar[t0])
+            if key in seen:
+                continue
+            seen.add(key)
+            label = f"{word} {per_bar[t0]:.2f}" if i == 0 else (f"→ {per_bar[t0]:.2f}" if i == len(starts) - 1 else "")
+            out.append({"t0": t0, "t1": t1, "price": per_bar[t0], "kind": leg.kind, "label": label})
+    return out
+
+
 def _markers(events: list[Event], bars: list[dict], step: int, review: Review | None, tz: str) -> list[dict]:
     comments = {c.n: c for c in (review.events if review else [])}
     times = [b["time"] for b in bars]
@@ -135,7 +165,8 @@ def _window(db: DayBars, t0: int, t1: int) -> list[dict]:
 def _render(root: Path, out_png: Path, *, size: tuple[int, int], title: str, sub: str, bars: list[dict],
             db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict], zones: list[dict],
             level_kinds: tuple[str, ...] | None = None, boxes: list[dict] | None = None,
-            mode: str = OVERVIEW_MODE, highlight: dict | None = None, extra_levels: list[dict] | None = None) -> Path:
+            mode: str = OVERVIEW_MODE, highlight: dict | None = None, extra_levels: list[dict] | None = None,
+            risk_lines: list[dict] | None = None) -> Path:
     from playwright.sync_api import sync_playwright
 
     width, chart_height = size
@@ -148,7 +179,7 @@ def _render(root: Path, out_png: Path, *, size: tuple[int, int], title: str, sub
                                 if all(abs(l["price"] - x["price"]) > 0.5 for x in extra_levels or [])]
                                + (extra_levels or []), ensure_ascii=False),
         zones_json=json.dumps(zones, ensure_ascii=False), trades_json=json.dumps(boxes or [], ensure_ascii=False),
-        highlight_json=json.dumps(highlight),
+        highlight_json=json.dumps(highlight), risk_json=json.dumps(risk_lines or [], ensure_ascii=False),
     )
     out_png.parent.mkdir(parents=True, exist_ok=True)
     out_png = out_png.resolve()
@@ -191,7 +222,7 @@ def render_htf(root: Path, out_png: Path, *, day: str, db: DayBars) -> Path:
 
 
 def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Trade, events: list[Event],
-                 review: Review | None, tz: str) -> Path:
+                 review: Review | None, tz: str, risk: TradeRisk | None = None) -> Path:
     """The day's 5-minute chart zoomed in on one trade, with its comments underneath."""
     zone = ZoneInfo(tz)
     evs = [e for e in events if e.trade_n == trade.n]
@@ -215,7 +246,7 @@ def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Tra
     return _render(root, out_png, size=ZOOM, title=title, sub=sub, bars=bars, db=db, vwap=_vwap5(db, bars),
                    markers=_markers(evs, bars, 300, review, tz), items=items, mode=ZOOM_MODE,
                    zones=_zones(visible_zones(db, wall_epoch(end, tz)), bars, evs[0].price),
-                   boxes=_boxes([trade], bars, 300, tz))
+                   boxes=_boxes([trade], bars, 300, tz), risk_lines=_risk_lines(trade, risk, bars, tz))
 
 
 def render_lesson(root: Path, out_png: Path, *, day: str, db: DayBars, lesson: Lesson, k: int,

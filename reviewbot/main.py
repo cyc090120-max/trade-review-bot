@@ -28,6 +28,7 @@ from .config import load_config
 from .events import build_events, describe_day
 from .gemini_review import EventComment, Review, build_prompt, demo_review, run_review
 from .market import DayBars, check_fills_in_range, fetch_day, load_sample
+from .orders import OrderBook
 from .push import send_discord, send_text
 from .trades import day_stats, describe_stats, filter_session, pair_trades
 
@@ -91,6 +92,13 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
                 send_text(webhook, f"📭 {day} 美股盘中没有交易，今天不复盘。")
             return 0
         bars, problems = get_bars(cfg, day, stats["symbols"], demo, tv, {t.symbol: t.contract for t in trades})
+        try:  # stops / targets / every modification; the review still runs without them
+            raw_orders = {} if demo else tradovate.fetch_orders(root, day, tz, tv)
+        except Exception as e:  # noqa: BLE001
+            raw_orders = {}
+            problems.append(f"止损记录读取失败：{e}")
+    book = OrderBook(raw_orders) if raw_orders.get("orders") else None
+    risks = {t.n: book.risk(t) for t in trades} if book else {}
 
     events = build_events(trades)
     day_text = describe_day(trades, events, tz)
@@ -111,7 +119,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
     overview = [render_overview(root, out_dir / f"overview_{sym}.png", day=day, db=db, events=events,
                                 trades=trades, tz=tz) for sym, db in bars.items()]
     plain = [render_trade(root, out_dir / f"plain_trade{t.n}.png", day=day, db=bars[t.symbol], trade=t,
-                          events=events, review=None, tz=tz) for t in charted]
+                          events=events, review=None, tz=tz, risk=risks.get(t.n)) for t in charted]
     image_list = "\n".join(
         [f"- 第{i}张：{p.stem.split('_')[1]} 1 小时图，开盘前的大周期背景" for i, p in enumerate(htf, 1)]
         + [f"- 第{len(htf) + i}张：{p.stem.split('_')[1]} 当天 5 分钟总览" for i, p in enumerate(overview, 1)]
@@ -127,7 +135,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
         prompt = build_prompt(root / cfg["prompt_file"], {
             "DATE": day, "STATS": stats_text, "TRADES": day_text, "CHAT_KNOWLEDGE": chat, "IMAGES": image_list,
             "LEVELS": "\n\n".join(describe_levels(db) for db in bars.values()),
-            "EVENT_CONTEXT": describe_events(trades, events, bars, tz),
+            "EVENT_CONTEXT": describe_events(trades, events, bars, tz, risks, book),
         })
         (out_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
         review = run_review(cfg, prompt, [p.read_bytes() for p in htf + overview + plain])
@@ -137,7 +145,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
 
     # 3) final images: summary card, overview, background, then each trade with its comments
     closeups = [render_trade(root, out_dir / f"trade{t.n}.png", day=day, db=bars[t.symbol], trade=t,
-                             events=events, review=review, tz=tz) for t in charted]
+                             events=events, review=review, tz=tz, risk=risks.get(t.n)) for t in charted]
     lessons = []
     for k, lesson in enumerate(review.lessons, 1):
         db = bars.get(lesson.symbol) or next(iter(bars.values()))
@@ -147,7 +155,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
         except Exception as e:  # a lesson with an odd time range shouldn't stop the review
             problems.append(f"今日教学 {k} 画图失败：{e}")
     card = render_card(root, out_dir / "card.png", day=day, trades=trades, stats=stats,
-                       review=review, model_name=model_name, tz=tz)
+                       review=review, model_name=model_name, tz=tz, risks=risks)
     images = [card] + overview + htf + closeups + lessons
     print(f"已生成：{', '.join(str(p) for p in images)}")
     for msg in problems:

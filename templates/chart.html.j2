@@ -63,6 +63,7 @@ const MARKERS = {{ markers_json|safe }};
 const ZONES = {{ zones_json|safe }};
 const TRADES = {{ trades_json|safe }};
 const HIGHLIGHT = {{ highlight_json|safe }};
+const RISK = {{ risk_json|safe }};
 const MODE = '{{ mode }}';
 const W = {{ width }}, H = {{ chart_height }};
 const C = {grid:'#f0f3fa', text:'#131722', border:'#e0e3eb', up:'#26a69a', down:'#ef5350',
@@ -81,6 +82,16 @@ const chart = LC.createChart(document.getElementById('chart'), {
 const series = chart.addSeries(LC.CandlestickSeries, {
   upColor: 'rgba(0,0,0,0)', downColor: C.down, borderVisible: true, borderUpColor: C.up, borderDownColor: C.down,
   wickUpColor: C.up, wickDownColor: C.down, lastValueVisible: false, priceLineVisible: false,
+  // stops are close to the trade: keep them on screen (far targets may fall outside)
+  autoscaleInfoProvider: (orig) => {
+    const r = orig();
+    if (!r) return r;
+    for (const s of RISK) if (s.kind === 'stop') {
+      r.priceRange.minValue = Math.min(r.priceRange.minValue, s.price);
+      r.priceRange.maxValue = Math.max(r.priceRange.maxValue, s.price);
+    }
+    return r;
+  },
 });
 series.setData(BARS.map(b => ({time: b.time, open: b.open, high: b.high, low: b.low, close: b.close})));
 const vol = chart.addSeries(LC.HistogramSeries, {priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false});
@@ -154,6 +165,23 @@ function draw() {
                               stroke: '#fff', 'stroke-width': 4, 'paint-order': 'stroke'});
       lab.textContent = t.label;
     }
+  }
+
+  // stop (red) and target (green) while the trade was open; a moved stop shows as steps
+  let lastRisk = {stop: null, target: null};
+  for (const s of RISK) {
+    const x0 = X(s.t0), x1 = X(s.t1), y = Y(s.price);
+    if (x0 === null || x1 === null || y === null || y < 0 || y > paneH) continue;
+    const col = s.kind === 'stop' ? C.sell : C.good;
+    const prev = lastRisk[s.kind];
+    if (prev && Math.abs(prev.x - x0) < 2) el('line', {x1: x0, y1: prev.y, x2: x0, y2: y, stroke: col, 'stroke-width': 2});
+    el('line', {x1: x0, y1: y, x2: Math.max(x1, x0 + 14), y2: y, stroke: col, 'stroke-width': 2.5, 'stroke-dasharray': '7 4'});
+    if (s.label) {
+      const t = el('text', {x: Math.max(x1, x0 + 14) + 6, y: y + 5, fill: col, 'font-size': 14, 'font-weight': 700,
+                            stroke: '#fff', 'stroke-width': 4, 'paint-order': 'stroke'});
+      t.textContent = s.label;
+    }
+    lastRisk[s.kind] = {x: Math.max(x1, x0 + 14), y};
   }
 
   // each fill: a dot at the exact price, plus a 买 / 卖 tag with an arrow (sells above the candle, buys below)

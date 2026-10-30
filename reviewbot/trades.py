@@ -34,6 +34,7 @@ class Fill:
     qty: int
     price: float
     role: str = ""          # 进场 / 加仓 / 减仓 / 平仓 (filled in by pair_trades)
+    order_id: int | None = None   # broker order that produced the fill (stop / limit / market)
 
     @property
     def signed_qty(self) -> int:

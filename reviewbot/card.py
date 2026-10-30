@@ -29,18 +29,23 @@ def launch_chromium(p):
 
 
 def render_card(root: Path, out_png: Path, *, day: str, trades: list[Trade], stats: dict,
-                review: Review, model_name: str, tz: str) -> Path:
+                review: Review, model_name: str, tz: str, risks: dict | None = None) -> Path:
     from playwright.sync_api import sync_playwright
 
     zone = ZoneInfo(tz)
     rows = []
     for t in trades:
+        risk = (risks or {}).get(t.n)
+        stop = risk.initial_stop if risk else None
+        risk_pts = (t.entry_avg - stop) * (1 if t.direction == "long" else -1) if stop is not None else None
         rows.append({
             "n": t.n, "symbol": t.symbol, "direction": t.direction, "max_qty": t.max_qty,
             "entry_avg": t.entry_avg, "exit_avg": t.exit_avg,
             "points_per_contract": t.points_per_contract, "pnl_usd": t.pnl_usd,
             "entry_hm": t.entry_time.astimezone(zone).strftime("%H:%M"),
             "exit_hm": t.exit_time.astimezone(zone).strftime("%H:%M") if t.exit_time else "",
+            "risk_pts": risk_pts, "has_risk": bool(risks),
+            "r": (t.points_per_contract / risk_pts) if risk_pts and t.points_per_contract is not None else None,
         })
 
     counts: dict[str, int] = {}

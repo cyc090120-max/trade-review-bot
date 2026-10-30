@@ -60,8 +60,33 @@ def _history(symbol: str, start: date, end: date, interval: str, zone: ZoneInfo)
     if hist.empty:
         return []
     hist = hist.tz_convert(zone)
-    return [Bar(ts.to_pydatetime(), float(r.Open), float(r.High), float(r.Low), float(r.Close), float(r.Volume))
-            for ts, r in hist.iterrows()]
+    return clean([Bar(ts.to_pydatetime(), float(r.Open), float(r.High), float(r.Low), float(r.Close), float(r.Volume))
+                  for ts, r in hist.iterrows()])
+
+
+BAD_BAR_FACTOR = 8   # an open / high / low this many median bar ranges away from where price really was is a bad print
+
+
+def clean(bars: list[Bar]) -> list[Bar]:
+    """Yahoo sometimes resumes after a data gap with a stale open (e.g. the previous day's close), which
+    draws one huge fake candle and squashes the whole chart. Pull such opens back to the previous close
+    and drop highs / lows that only the bad open produced."""
+    if len(bars) < 3:
+        return bars
+    ranges = sorted(b.h - b.l for b in bars)
+    limit = max(ranges[len(ranges) // 2], 0.25) * BAD_BAR_FACTOR
+    out = [bars[0]]
+    for b in bars[1:]:
+        prev = out[-1].c
+        o, h, l = b.o, b.h, b.l
+        if abs(o - prev) > limit and abs(b.c - prev) <= limit:
+            o = prev
+        if h - max(o, b.c) > limit:
+            h = max(o, b.c)
+        if min(o, b.c) - l > limit:
+            l = min(o, b.c)
+        out.append(Bar(b.t, o, max(h, o, b.c), min(l, o, b.c), b.c, b.v))   # keep the candle consistent
+    return out
 
 
 def _as_dict(b: Bar, tz: str) -> dict:

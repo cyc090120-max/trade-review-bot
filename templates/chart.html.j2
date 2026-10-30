@@ -149,7 +149,8 @@ function draw() {
       const w = Math.max(x1 - x0, 8);
       back('rect', {x: x0 - 4, y: Math.min(y0, y1), width: w + 8, height: Math.max(Math.abs(y1 - y0), 2), fill: col[0], stroke: col[1], 'stroke-width': 1.5});
       back('line', {x1: x0, y1: y0, x2: x0 + w, y2: y1, stroke: col[1], 'stroke-width': 2, 'stroke-dasharray': '5 4'});
-      const lab = el('text', {x: x0 + w / 2, y: Math.min(y0, y1) - 8, 'text-anchor': 'middle', fill: col[1], 'font-size': 15, 'font-weight': 700,
+      // the 买/卖 tags sit above and below the box, so its label goes to the right
+      const lab = el('text', {x: x0 + w + 10, y: (y0 + y1) / 2 + 5, 'text-anchor': 'start', fill: col[1], 'font-size': 15, 'font-weight': 700,
                               stroke: '#fff', 'stroke-width': 4, 'paint-order': 'stroke'});
       lab.textContent = t.label;
     }

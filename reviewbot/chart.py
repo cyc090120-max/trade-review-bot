@@ -105,7 +105,7 @@ def _pnl(usd: float) -> str:
 def render_overview(root: Path, out_png: Path, *, day: str, db: DayBars, events: list[Event],
                     trades: list[Trade], tz: str) -> Path:
     closed = [t for t in trades if t.symbol == db.symbol and not t.is_open]
-    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线 VWAP · 色块是 FVG / 缺口 · "
+    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线 VWAP · 绿红 FVG · 蓝橙 OB · 紫色缺口 · "
            f"{len(closed)} 笔合计 {_pnl(sum(t.pnl_usd for t in closed))} 美元")
     vwap5 = [v for v in db.vwap if v["time"] % 300 == 240]  # VWAP at the close of each 5-minute bar
     vwap5 = [{"time": v["time"] - 240, "value": v["value"]} for v in vwap5]
@@ -152,4 +152,4 @@ def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Tra
                           "comment": c.comment, "hindsight": c.hindsight})
     return _render(root, out_png, width=900, chart_height=520, title=title, sub=sub, bars=bars, db=db, vwap=vwap,
                    markers=_markers(evs, bars, step, review, tz), items=items,
-                   zones=visible_zones(db, wall_epoch(end, tz)))
+                   zones=visible_zones(db, wall_epoch(end, tz), t0 if step == 60 else None))

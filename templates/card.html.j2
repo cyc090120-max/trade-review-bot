@@ -90,6 +90,13 @@
   </div>
 </section>
 
+{% if review.lessons %}
+<section>
+  <h2>今日教学</h2>
+  <div class="box"><ol>{% for x in review.lessons %}<li>{{ x }}</li>{% endfor %}</ol></div>
+</section>
+{% endif %}
+
 {% if review.chat_insights %}
 <section>
   <h2>群聊观点对照</h2>

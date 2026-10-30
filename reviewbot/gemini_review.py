@@ -21,6 +21,7 @@ class Review(BaseModel):
     market_context: str = Field(description="当天市场状态与关键位置，2-3 句")
     playbook_fit: str = Field(description="打法是否匹配当天状态，2-3 句")
     events: list[EventComment] = Field(description="每一次出手/出场的点评，覆盖所有编号，按编号顺序")
+    lessons: list[str] = Field(default_factory=list, description="今日教学：从今天行情里挑 1–3 个 SMC / ICT 教科书式的例子（可以是我没做的），每条讲清楚在哪个时间价格、是什么概念、怎么识别、怎么利用")
     chat_insights: list[str] = Field(description="与当天相关的群聊观点及印证/冲突，没有则为空列表")
     tomorrow: list[str] = Field(description="明日要点，最多 3 条，每条可直接执行")
 

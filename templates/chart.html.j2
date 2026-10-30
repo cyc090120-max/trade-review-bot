@@ -107,15 +107,20 @@ function draw() {
   const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
 
   // FVGs and gaps: translucent boxes from where they formed to the right edge
-  const ZC = {bull: ['rgba(38,166,154,.16)', '#26a69a'], bear: ['rgba(239,83,80,.16)', '#ef5350'], gap: ['rgba(156,106,222,.16)', '#9c6ade']};
+  // FVG / IFVG green-red, OB blue-orange, gaps purple; IFVG has a dashed outline
+  const ZC = {FVG: {bull: ['rgba(38,166,154,.16)', '#26a69a'], bear: ['rgba(239,83,80,.16)', '#ef5350']},
+              OB: {bull: ['rgba(41,98,255,.18)', '#5b8cff'], bear: ['rgba(255,152,0,.16)', '#ff9800']},
+              GAP: {gap: ['rgba(156,106,222,.16)', '#9c6ade']}};
+  ZC.IFVG = ZC.FVG;
   for (const z of ZONES) {
+    const zc = (ZC[z.type] || ZC.FVG)[z.kind] || ZC.GAP.gap;
     const x0 = chart.timeScale().timeToCoordinate(z.start) ?? 0;
     const y0 = series.priceToCoordinate(z.hi), y1 = series.priceToCoordinate(z.lo);
     if (y0 === null || y1 === null) continue;
     const top = Math.max(Math.min(y0, y1), 0), bottom = Math.min(Math.max(y0, y1), paneH);
     if (bottom - top < 1) continue;
-    el('rect', {x: x0, y: top, width: Math.max(paneW - x0, 0), height: bottom - top, fill: ZC[z.kind][0], stroke: ZC[z.kind][1], 'stroke-width': 0.8, 'stroke-opacity': 0.5});
-    const lab = el('text', {x: x0 + 6, y: top + 15, fill: ZC[z.kind][1], 'font-size': 13, 'font-weight': 600});
+    el('rect', {x: x0, y: top, width: Math.max(paneW - x0, 0), height: bottom - top, fill: zc[0], stroke: zc[1], 'stroke-width': z.type === 'IFVG' ? 1.5 : 0.8, 'stroke-opacity': z.type === 'IFVG' ? 0.9 : 0.5, 'stroke-dasharray': z.type === 'IFVG' ? '6 4' : ''});
+    const lab = el('text', {x: x0 + 6, y: top + 15, fill: zc[1], 'font-size': 13, 'font-weight': 600});
     lab.textContent = z.name;
   }
 

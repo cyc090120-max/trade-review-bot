@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+from . import smc
+
 YAHOO = {"MNQ": "MNQ=F", "MES": "MES=F", "NQ": "NQ=F", "ES": "ES=F"}
 ROUND = {"MNQ": {"step": 100}, "NQ": {"step": 100},
          "MES": {"index": "^GSPC", "step": 10}, "ES": {"index": "^GSPC", "step": 10}}
 SWINGS_PER_SIDE = 2          # nearest unbroken swing highs / lows / FVGs kept per timeframe
-MIN_FVG = 0.5                # points
+MIN_GAP = 0.5                # points; smaller opening gaps are ignored
 
 
 @dataclass
@@ -29,7 +31,7 @@ class DayBars:
     vwap: list[dict] = field(default_factory=list)     # session VWAP from the open, per 1m bar {"time", "value"}
     htf: list[dict] = field(default_factory=list)      # 1H bars of the last few sessions, up to the open
     gap: str = ""                                      # opening gap, in words
-    zones: list[dict] = field(default_factory=list)    # FVGs and gaps known before the open {name, kind, lo, hi, start}
+    zones: list[dict] = field(default_factory=list)    # FVG / IFVG / OB / gaps known before the open (see smc.py)
     basis: list[dict] = field(default_factory=list)    # futures minus cash index, per 1m bar {"time", "value"}
     index_name: str = ""                               # e.g. SPX, when round numbers follow the cash index
 
@@ -90,33 +92,6 @@ def open_swings(bars: list, k: int = 2, hi=lambda b: b.h, lo=lambda b: b.l):
         if lo(bars[i]) < min(lo(x) for x in others) and all(lo(x) > lo(bars[i]) for x in rest):
             lows.append((bars[i], lo(bars[i])))
     return sorted(highs, key=lambda x: x[1]), sorted(lows, key=lambda x: -x[1])
-
-
-def open_fvgs(bars: list, hi=lambda b: b.h, lo=lambda b: b.l, min_size: float = MIN_FVG):
-    """Fair value gaps (3-bar imbalance) that later bars have not traded all the way through.
-    Returns (kind "bull"/"bear", low, high, middle bar)."""
-    out = []
-    for i in range(1, len(bars) - 1):
-        a, c = bars[i - 1], bars[i + 1]
-        if hi(a) < lo(c):
-            kind, z_lo, z_hi = "bull", hi(a), lo(c)
-        elif lo(a) > hi(c):
-            kind, z_lo, z_hi = "bear", hi(c), lo(a)
-        else:
-            continue
-        later = bars[i + 2:]
-        filled = any(lo(x) <= z_lo for x in later) if kind == "bull" else any(hi(x) >= z_hi for x in later)
-        if not filled and z_hi - z_lo >= min_size:
-            out.append((kind, round(z_lo, 2), round(z_hi, 2), bars[i]))
-    return out
-
-
-def nearest_zones(zones: list, price: float, n: int = SWINGS_PER_SIDE) -> list:
-    """The n zones just above and just below price, plus any price is sitting in."""
-    above = sorted((z for z in zones if z[1] > price), key=lambda z: z[1])[:n]
-    below = sorted((z for z in zones if z[2] < price), key=lambda z: -z[2])[:n]
-    inside = [z for z in zones if z[1] <= price <= z[2]]
-    return inside + above + below
 
 
 def equal_levels(swings: list, tol: float = 0.5) -> list[float]:
@@ -195,23 +170,23 @@ def fetch_day(symbol: str, day: str, tz: str, start: str, end: str, lv: dict | N
             pairs += [(f"{name}等高 EQH", p) for p in equal_levels(highs)]
             pairs += [(f"{name}等低 EQL", p) for p in equal_levels(lows)]
         if name != "日线":
-            for kind, z_lo, z_hi, b in nearest_zones(open_fvgs(bars), first_open):
-                zones.append({"name": f"{name} {'看涨' if kind == 'bull' else '看跌'} FVG", "kind": kind,
-                              "lo": z_lo, "hi": z_hi, "start": wall_epoch(b.t, tz)})
+            found = smc.zones([_as_dict(b, tz) for b in bars], name)
+            zones += smc.nearest([z for z in found if z["type"] != "OB"], first_open)
+            zones += smc.nearest([z for z in found if z["type"] == "OB"], first_open, n=1)
 
     # ICT opening gaps: NDOG (17:00 close -> 18:00 reopen), NWOG (Friday close -> Sunday reopen)
     sunday = datetime.combine(d - timedelta(days=d.weekday() + 1), time(18, 0), zone)
     for name, reopen in (("NDOG 日开盘缺口", evening), ("NWOG 周开盘缺口", sunday)):
         before = [b for b in r5 if reopen - timedelta(days=3) <= b.t < reopen - timedelta(minutes=30)]
         after = [b for b in r5 if reopen <= b.t < reopen + timedelta(hours=1)]
-        if before and after and abs(after[0].o - before[-1].c) >= MIN_FVG and not (name.startswith("NDOG") and reopen == sunday):
+        if before and after and abs(after[0].o - before[-1].c) >= MIN_GAP and not (name.startswith("NDOG") and reopen == sunday):
             z_lo, z_hi = sorted((before[-1].c, after[0].o))
-            zones.append({"name": name, "kind": "gap", "lo": round(z_lo, 2), "hi": round(z_hi, 2),
-                          "start": wall_epoch(after[0].t, tz)})
-    if prev_days and abs(rth[0].o - pdc) >= MIN_FVG:
+            zones.append({"name": name, "tf": "", "type": "GAP", "kind": "gap", "lo": round(z_lo, 2),
+                          "hi": round(z_hi, 2), "start": wall_epoch(after[0].t, tz), "state": ""})
+    if prev_days and abs(rth[0].o - pdc) >= MIN_GAP:
         z_lo, z_hi = sorted((pdc, rth[0].o))
-        zones.append({"name": "开盘缺口 RTH", "kind": "gap", "lo": round(z_lo, 2), "hi": round(z_hi, 2),
-                      "start": wall_epoch(rth[0].t, tz)})
+        zones.append({"name": "开盘缺口 RTH", "tf": "", "type": "GAP", "kind": "gap", "lo": round(z_lo, 2),
+                      "hi": round(z_hi, 2), "start": wall_epoch(rth[0].t, tz), "state": ""})
 
     monday = d - timedelta(days=d.weekday())
     last_week = [b for b in daily if monday - timedelta(days=7) <= b.t.date() < monday]

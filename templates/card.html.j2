@@ -2,8 +2,8 @@
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
   :root{
-    --bg:#131722; --panel:#1b1f2b; --line:#2a2e39; --text:#e1e3ea; --muted:#8b8fa0;
-    --up:#26a69a; --down:#ef5350; --warn:#f0a73a; --accent:#5b8cff;
+    --bg:#ffffff; --panel:#f5f7fb; --line:#e0e3eb; --text:#131722; --muted:#787b86;
+    --up:#089981; --down:#e53935; --warn:#e08a00; --accent:#2962ff;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
@@ -36,9 +36,9 @@
   .tc:first-child{padding-top:0}
   .tc .n{flex:none}
   .badge{display:inline-block;font-size:15px;border-radius:5px;padding:1px 9px;margin-bottom:4px;font-weight:600}
-  .b-good{background:rgba(38,166,154,.18);color:var(--up)}
-  .b-mid{background:rgba(240,167,58,.18);color:var(--warn)}
-  .b-bad{background:rgba(239,83,80,.18);color:var(--down)}
+  .b-good{background:rgba(8,153,129,.12);color:var(--up)}
+  .b-mid{background:rgba(224,138,0,.14);color:var(--warn)}
+  .b-bad{background:rgba(229,57,53,.12);color:var(--down)}
   ol{margin:0;padding-left:28px} li + li{margin-top:8px}
   ul{margin:0;padding-left:24px}
   .foot{margin-top:26px;color:var(--muted);font-size:15px;display:flex;justify-content:space-between}
@@ -78,7 +78,6 @@
   <h2>当日环境</h2>
   <div class="box">
     <p><span class="lbl">市场</span>{{ review.market_context }}</p>
-    <p><span class="lbl">打法</span>{{ review.playbook_fit }}</p>
   </div>
 </section>
 
@@ -86,16 +85,9 @@
   <h2>出手 / 出场评分</h2>
   <div class="box score">
     {% for k, v in verdict_counts %}<span class="badge {{ verdict_class(k) }}">{{ k }} × {{ v }}</span>{% endfor %}
-    <span class="hint">每一笔的点评见后面的特写图</span>
+    <span class="hint">每一笔的点评见后面的放大图{% if review.lessons %}，今日教学 {{ review.lessons|length }} 个例子也在后面{% endif %}</span>
   </div>
 </section>
-
-{% if review.lessons %}
-<section>
-  <h2>今日教学</h2>
-  <div class="box"><ol>{% for x in review.lessons %}<li>{{ x }}</li>{% endfor %}</ol></div>
-</section>
-{% endif %}
 
 {% if review.chat_insights %}
 <section>

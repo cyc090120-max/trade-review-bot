@@ -66,7 +66,7 @@ def _history(symbol: str, start: date, end: date, interval: str, zone: ZoneInfo)
 
 def _as_dict(b: Bar, tz: str) -> dict:
     return {"time": wall_epoch(b.t, tz), "open": round(b.o, 2), "high": round(b.h, 2),
-            "low": round(b.l, 2), "close": round(b.c, 2)}
+            "low": round(b.l, 2), "close": round(b.c, 2), "volume": int(b.v)}
 
 
 def resample(bars: list[Bar], minutes: int, offset_min: int = 0) -> list[Bar]:

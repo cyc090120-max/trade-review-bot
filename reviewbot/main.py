@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from . import sample, tradovate
 from .card import render_card
-from .chart import render_htf, render_overview, render_trade
+from .chart import render_htf, render_lesson, render_overview, render_trade
 from .context import describe_events, describe_levels
 from .config import load_config
 from .events import build_events, describe_day
@@ -107,7 +107,7 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
     image_list = "\n".join(
         [f"- 第{i}张：{p.stem.split('_')[1]} 1 小时图，开盘前的大周期背景" for i, p in enumerate(htf, 1)]
         + [f"- 第{len(htf) + i}张：{p.stem.split('_')[1]} 当天 5 分钟总览" for i, p in enumerate(overview, 1)]
-        + [f"- 第{len(htf) + len(overview) + i}张：第{t.n}笔的特写" for i, t in enumerate(charted, 1)])
+        + [f"- 第{len(htf) + len(overview) + i}张：第{t.n}笔附近放大的 5 分钟图" for i, t in enumerate(charted, 1)])
 
     # 2) review
     if offline or not cfg["gemini_api_key"]:
@@ -130,9 +130,17 @@ def run(day: str | None, demo: bool, offline: bool, push: bool) -> int:
     # 3) final images: summary card, overview, background, then each trade with its comments
     closeups = [render_trade(root, out_dir / f"trade{t.n}.png", day=day, db=bars[t.symbol], trade=t,
                              events=events, review=review, tz=tz) for t in charted]
+    lessons = []
+    for k, lesson in enumerate(review.lessons, 1):
+        db = bars.get(lesson.symbol) or next(iter(bars.values()))
+        try:
+            lessons.append(render_lesson(root, out_dir / f"lesson{k}.png", day=day, db=db, lesson=lesson, k=k,
+                                         events=events, tz=tz))
+        except Exception as e:  # a lesson with an odd time range shouldn't stop the review
+            problems.append(f"今日教学 {k} 画图失败：{e}")
     card = render_card(root, out_dir / "card.png", day=day, trades=trades, stats=stats,
                        review=review, model_name=model_name, tz=tz)
-    images = [card] + overview + htf + closeups
+    images = [card] + overview + htf + closeups + lessons
     print(f"已生成：{', '.join(str(p) for p in images)}")
     for msg in problems:
         print("注意：" + msg)

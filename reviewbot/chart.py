@@ -1,9 +1,11 @@
-"""Charts: the day's 5-minute overview, the 1-hour background before the open, and one 1-minute
-close-up per trade with that trade's comments underneath (big type, readable on a phone)."""
+"""Charts, all drawn the same way as the trader's own 5-minute chart (white, hollow green up candles,
+solid red down, volume underneath): the day's overview, the 1-hour background before the open, and
+zoomed-in views of that same 5-minute chart for each trade and each teaching example, with the text
+underneath (big type, readable on a phone)."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,58 +14,55 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from .card import WEEKDAYS, launch_chromium, verdict_class
 from .context import visible_zones
 from .events import Event
-from .gemini_review import Review
+from .gemini_review import Lesson, Review
 from .market import DayBars, wall_epoch
 from .trades import Trade
 
-LEVEL_COLORS = [("前周", "#e91e63"), ("前日", "#f7a600"), ("隔夜", "#9c6ade"), ("亚盘", "#9c6ade"), ("伦敦", "#9c6ade"),
-                ("等高", "#ffeb3b"), ("等低", "#ffeb3b"), ("日线", "#26c6da"), ("4H", "#26c6da"), ("1H", "#4dd0e1"),
-                ("15m", "#80cbc4"), ("整数", "#6b6f7d"), ("SPX", "#6b6f7d"), ("NDX", "#6b6f7d")]
+LEVEL_COLORS = [("前周", "#d81b60"), ("前日", "#ef6c00"), ("隔夜", "#7e57c2"), ("亚盘", "#7e57c2"), ("伦敦", "#7e57c2"),
+                ("等高", "#c0a000"), ("等低", "#c0a000"), ("日线", "#00838f"), ("4H", "#00838f"), ("1H", "#0097a7"),
+                ("15m", "#26a69a"), ("整数", "#787b86"), ("SPX", "#787b86"), ("NDX", "#787b86")]
 VCLASS = {"b-good": "good", "b-mid": "mid", "b-bad": "bad"}
-
 
 # lower = more important; a line several sources agree on ranks higher still
 LEVEL_RANK = [("前周", 0), ("前日", 1), ("隔夜", 2), ("日线", 2), ("4H", 3), ("亚盘", 3), ("伦敦", 3),
               ("1H", 4), ("等高", 4), ("等低", 4), ("SPX", 5), ("NDX", 5), ("整数", 5), ("15m", 6)]
 HTF_LEVELS = ("前周", "前日", "隔夜", "日线", "4H", "1H")
 MAX_LEVELS, MAX_ZONES = 7, 3
-# fills: "arrow" = 买/卖 tags with arrows, "box" = one green/red box per trade, "both". Boxes overlap on a
-# busy day, so the overview uses arrows only and each trade close-up gets both.
-OVERVIEW_MODE, TRADE_MODE = "arrow", "both"
+# fills: "arrow" = 买/卖 tags with arrows, "both" = tags plus a green/red box per trade. Boxes overlap
+# on a busy day, so the overview uses arrows only.
+OVERVIEW_MODE, ZOOM_MODE = "arrow", "both"
+WIDE, ZOOM = (1200, 960), (1000, 800)       # width, chart height: about the trader's own chart's 5:4
+ZOOM_PAD_BARS, ZOOM_MIN_BARS = 12, 36       # 5-minute bars shown around a trade / lesson
 
 
 def _rank(name: str) -> float:
     parts = name.split(" / ")
-    best = min(next((r for k, r in LEVEL_RANK if k in part), 9) for part in parts)
-    return best - 0.5 * (len(parts) - 1)
+    return min(next((r for k, r in LEVEL_RANK if k in part), 9) for part in parts) - 0.5 * (len(parts) - 1)
 
 
-def _levels(db: DayBars, bars: list[dict], only: tuple[str, ...] | None = None) -> tuple[list[dict], list[float]]:
-    """At most MAX_LEVELS of the most important levels in (or just outside) the visible range; lines too
-    close to tell apart are merged. The price scale stretches to show them."""
+def _levels(db: DayBars, bars: list[dict], only: tuple[str, ...] | None = None) -> list[dict]:
+    """At most MAX_LEVELS of the most important levels inside the price range of the bars shown (the
+    scale is not stretched for far-away levels, so candles keep their shape); close lines merge."""
     lo, hi = min(b["low"] for b in bars), max(b["high"] for b in bars)
-    pad = (hi - lo) * 0.15
+    pad = (hi - lo) * 0.03
     cands = [(n, p) for n, p in db.levels.items()
              if lo - pad <= p <= hi + pad and (only is None or any(k in n for k in only))]
     if only:  # keep only the allowed parts of merged names
         cands = [(" / ".join(x for x in n.split(" / ") if any(k in x for k in only)), p) for n, p in cands]
     chosen = sorted(sorted(cands, key=lambda x: _rank(x[0]))[:MAX_LEVELS], key=lambda x: x[1])
     merged: list[list] = []
-    gap = (hi - lo + 2 * pad) * 0.025
     for n, p in chosen:
-        if merged and p - merged[-1][1] < gap:
+        if merged and p - merged[-1][1] < (hi - lo) * 0.025:
             merged[-1][0] += " / " + n
-            if _rank(n) < _rank(merged[-1][0].split(" / ")[0]):
-                merged[-1][1] = p
         else:
             merged.append([n, p])
     out = []
     for n, p in merged:
         head = min(n.split(" / "), key=_rank)
-        color = next((c for k, c in LEVEL_COLORS if k in head), "#787b86")
-        out.append({"name": head + (" 等" if " / " in n else ""), "price": p, "color": color,
+        out.append({"name": head + (" 等" if " / " in n else ""), "price": p,
+                    "color": next((c for k, c in LEVEL_COLORS if k in head), "#787b86"),
                     "width": 2 if " / " in n else 1})
-    return out, [l["price"] for l in out]
+    return out
 
 
 def _zones(zones: list[dict], bars: list[dict], ref: float, tfs: tuple[str, ...] | None = None) -> list[dict]:
@@ -82,10 +81,13 @@ def _zones(zones: list[dict], bars: list[dict], ref: float, tfs: tuple[str, ...]
     return [z for _, z in sorted(cands, key=lambda x: x[0])[:MAX_ZONES]]
 
 
+def _snap(times: list[int], t: int, step: int) -> int:
+    return min(times, key=lambda x: abs(x - (t - t % step)))
+
+
 def _boxes(trades: list[Trade], bars: list[dict], step: int, tz: str) -> list[dict]:
     """One box per closed trade: entry time/avg price to exit time/avg price."""
     times = [b["time"] for b in bars]
-    snap = lambda t: min(times, key=lambda x: abs(x - (t - t % step)))
     out = []
     for t in trades:
         if t.is_open:
@@ -93,8 +95,8 @@ def _boxes(trades: list[Trade], bars: list[dict], step: int, tz: str) -> list[di
         t0, t1 = wall_epoch(t.entry_time, tz), wall_epoch(t.exit_time, tz)
         if t1 < times[0] or t0 > times[-1] + step:
             continue
-        out.append({"t0": snap(t0), "t1": snap(t1), "p0": t.entry_avg, "p1": t.exit_avg, "pnl": t.pnl_usd,
-                    "label": f"第{t.n}笔 {t.points_per_contract:+.2f}"})
+        out.append({"t0": _snap(times, t0, step), "t1": _snap(times, t1, step), "p0": t.entry_avg,
+                    "p1": t.exit_avg, "pnl": t.pnl_usd, "label": f"第{t.n}笔 {t.points_per_contract:+.2f}"})
     return out
 
 
@@ -104,31 +106,49 @@ def _markers(events: list[Event], bars: list[dict], step: int, review: Review | 
     out = []
     for e in events:
         t = wall_epoch(e.time, tz)
-        t -= t % step
-        if not times or t < times[0] - step or t > times[-1] + step:
+        if not times or t < times[0] or t >= times[-1] + step:
             continue
         c = comments.get(e.n)
-        out.append({"n": e.n, "is_buy": e.is_buy, "price": e.price, "side_text": "买" if e.is_buy else "卖", "qty": e.qty,
-                    "bar_time": t if t in times else min(times, key=lambda x: abs(x - t)),
+        out.append({"is_buy": e.is_buy, "price": e.price, "side_text": "买" if e.is_buy else "卖", "qty": e.qty,
+                    "bar_time": _snap(times, t, step),
                     "verdict_class": VCLASS[verdict_class(c.verdict)] if c else ""})
     return out
 
 
-def _render(root: Path, out_png: Path, *, width: int, chart_height: int, title: str, sub: str,
-            bars: list[dict], db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict],
-            zones: list[dict], level_kinds: tuple[str, ...] | None = None, boxes: list[dict] | None = None,
-            mode: str = OVERVIEW_MODE) -> Path:
+def _vwap5(db: DayBars, bars: list[dict]) -> list[dict]:
+    """VWAP at the close of each 5-minute bar, drawn at the bar's time."""
+    t0, t1 = bars[0]["time"], bars[-1]["time"]
+    return [{"time": v["time"] - 240, "value": v["value"]} for v in db.vwap
+            if v["time"] % 300 == 240 and t0 <= v["time"] - 240 <= t1]
+
+
+def _window(db: DayBars, t0: int, t1: int) -> list[dict]:
+    """5-minute bars from t0 to t1 plus ZOOM_PAD_BARS each side, widened to at least ZOOM_MIN_BARS."""
+    times = [b["time"] for b in db.bars]
+    i0 = max(0, next((i for i, t in enumerate(times) if t + 300 > t0), 0) - ZOOM_PAD_BARS)
+    i1 = min(len(times), next((i for i, t in enumerate(times) if t > t1), len(times)) + ZOOM_PAD_BARS)
+    while i1 - i0 < ZOOM_MIN_BARS and (i0 > 0 or i1 < len(times)):
+        i0, i1 = max(0, i0 - 1), min(len(times), i1 + 1)
+    return db.bars[i0:i1]
+
+
+def _render(root: Path, out_png: Path, *, size: tuple[int, int], title: str, sub: str, bars: list[dict],
+            db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict], zones: list[dict],
+            level_kinds: tuple[str, ...] | None = None, boxes: list[dict] | None = None,
+            mode: str = OVERVIEW_MODE, highlight: dict | None = None, extra_levels: list[dict] | None = None) -> Path:
     from playwright.sync_api import sync_playwright
 
-    levels, extra = _levels(db, bars, level_kinds)
+    width, chart_height = size
     env = Environment(loader=FileSystemLoader(root / "templates"), autoescape=select_autoescape(["html", "j2"]))
     page_html = env.get_template("chart.html.j2").render(
-        width=width, chart_height=chart_height, title=title, sub=sub, items=items,
+        width=width, chart_height=chart_height, title=title, sub=sub, items=items, mode=mode,
         lib_uri=(root / "reviewbot/vendor/lightweight-charts.standalone.production.js").as_uri(),
-        bars_json=json.dumps(bars), vwap_json=json.dumps(vwap), levels_json=json.dumps(levels, ensure_ascii=False),
-        scale_extra_json=json.dumps(extra), markers_json=json.dumps(markers),
+        bars_json=json.dumps(bars), vwap_json=json.dumps(vwap), markers_json=json.dumps(markers),
+        levels_json=json.dumps([l for l in _levels(db, bars, level_kinds)   # a lesson's own line replaces a same-price level
+                                if all(abs(l["price"] - x["price"]) > 0.5 for x in extra_levels or [])]
+                               + (extra_levels or []), ensure_ascii=False),
         zones_json=json.dumps(zones, ensure_ascii=False), trades_json=json.dumps(boxes or [], ensure_ascii=False),
-        mode=mode,
+        highlight_json=json.dumps(highlight),
     )
     out_png.parent.mkdir(parents=True, exist_ok=True)
     out_png = out_png.resolve()
@@ -153,56 +173,69 @@ def _pnl(usd: float) -> str:
 
 
 def render_overview(root: Path, out_png: Path, *, day: str, db: DayBars, events: list[Event],
-                    trades: list[Trade], tz: str, mode: str = OVERVIEW_MODE) -> Path:
+                    trades: list[Trade], tz: str) -> Path:
     closed = [t for t in trades if t.symbol == db.symbol and not t.is_open]
-    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线 VWAP · 绿红 FVG · 蓝橙 OB · 紫色缺口 · "
+    sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 灰线 VWAP · 绿红 FVG · 蓝橙 OB · 紫色缺口 · "
            f"{len(closed)} 笔合计 {_pnl(sum(t.pnl_usd for t in closed))} 美元")
-    vwap5 = [v for v in db.vwap if v["time"] % 300 == 240]  # VWAP at the close of each 5-minute bar
-    vwap5 = [{"time": v["time"] - 240, "value": v["value"]} for v in vwap5]
-    return _render(root, out_png, width=1200, chart_height=640, title=f"{db.symbol} 全天 5 分钟", sub=sub,
-                   bars=db.bars, db=db, vwap=vwap5,
-                   markers=_markers([e for e in events if e.symbol == db.symbol], db.bars, 300, None, tz), items=[],
-                   zones=_zones(db.zones, db.bars, db.bars[0]["open"]),
-                   boxes=_boxes([t for t in trades if t.symbol == db.symbol], db.bars, 300, tz), mode=mode)
+    return _render(root, out_png, size=WIDE, title=f"{db.symbol} 全天 5 分钟", sub=sub, bars=db.bars, db=db,
+                   vwap=_vwap5(db, db.bars), items=[],
+                   markers=_markers([e for e in events if e.symbol == db.symbol], db.bars, 300, None, tz),
+                   zones=_zones(db.zones, db.bars, db.bars[0]["open"]), mode=OVERVIEW_MODE)
 
 
 def render_htf(root: Path, out_png: Path, *, day: str, db: DayBars) -> Path:
-    return _render(root, out_png, width=1200, chart_height=640, title=f"{db.symbol} 1 小时 · 开盘前的大周期",
+    return _render(root, out_png, size=WIDE, title=f"{db.symbol} 1 小时 · 开盘前的大周期",
                    sub=f"最近 5 个交易日，截至 {_date_label(day)} 09:30 ET · 虚线是开盘前已知的关键位",
-                   bars=db.htf, db=db, vwap=[], markers=[], items=[],
-                   zones=_zones(db.zones, db.htf, db.htf[-1]["close"], tfs=("1H", "4H", "")), level_kinds=HTF_LEVELS)
+                   bars=db.htf, db=db, vwap=[], markers=[], items=[], level_kinds=HTF_LEVELS,
+                   zones=_zones(db.zones, db.htf, db.htf[-1]["close"], tfs=("1H", "4H", "")))
 
 
 def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Trade, events: list[Event],
-                 review: Review | None, tz: str, mode: str = TRADE_MODE) -> Path:
+                 review: Review | None, tz: str) -> Path:
+    """The day's 5-minute chart zoomed in on one trade, with its comments underneath."""
     zone = ZoneInfo(tz)
     evs = [e for e in events if e.trade_n == trade.n]
     end = trade.exit_time or evs[-1].time
-    t0 = wall_epoch(trade.entry_time - timedelta(minutes=20), tz)
-    t1 = wall_epoch(end + timedelta(minutes=10), tz)
-    one_min = [b for b in db.bars1 if t0 <= b["time"] <= t1]
-    if one_min and len(one_min) <= 150:
-        bars, step, vwap, tf = one_min, 60, [v for v in db.vwap if t0 <= v["time"] <= t1], "1 分钟"
-    else:  # no 1-minute data, or a long hold: 5-minute bars with more room around the trade
-        t0, t1 = t0 - 40 * 60, t1 + 20 * 60
-        bars, step, tf = [b for b in db.bars if t0 <= b["time"] <= t1], 300, "5 分钟"
-        vwap = [{"time": v["time"] - 240, "value": v["value"]} for v in db.vwap
-                if v["time"] % 300 == 240 and t0 <= v["time"] - 240 <= t1]
+    bars = _window(db, wall_epoch(trade.entry_time, tz), wall_epoch(end, tz))
     side = "做多" if trade.direction == "long" else "做空"
     hm = lambda d: d.astimezone(zone).strftime("%H:%M")
     title = f"第{trade.n}笔 · {trade.symbol} {side} {trade.max_qty}张 · {hm(trade.entry_time)}–{hm(end)}"
-    sub = (f"{tf} · 每张 {trade.points_per_contract:+.2f} 点 · {_pnl(trade.pnl_usd)} 美元"
-           if not trade.is_open else f"{tf} · 收盘时仍持仓")
+    sub = (f"5 分钟 · 每张 {trade.points_per_contract:+.2f} 点 · {_pnl(trade.pnl_usd)} 美元"
+           if not trade.is_open else "5 分钟 · 收盘时仍持仓")
     comments = {c.n: c for c in (review.events if review else [])}
     items = []
     for e in evs:
         c = comments.get(e.n)
         if c:
-            items.append({"label": "买" if e.is_buy else "卖", "side": "buy" if e.is_buy else "sell", "time": e.time.astimezone(zone).strftime("%H:%M:%S"), "title": e.title,
-                          "action": f"{'买' if e.is_buy else '卖'}{e.qty} @ {e.price:,.2f}",
+            items.append({"label": "买" if e.is_buy else "卖", "side": "buy" if e.is_buy else "sell",
+                          "meta": f"<strong>{e.time.astimezone(zone):%H:%M:%S} {e.title}</strong>"
+                                  f"{'买' if e.is_buy else '卖'}{e.qty} @ {e.price:,.2f}",
                           "verdict": c.verdict, "vclass": VCLASS[verdict_class(c.verdict)], "tag": c.tag,
                           "comment": c.comment, "hindsight": c.hindsight})
-    return _render(root, out_png, width=900, chart_height=520, title=title, sub=sub, bars=bars, db=db, vwap=vwap,
-                   markers=_markers(evs, bars, step, review, tz), items=items,
-                   zones=_zones(visible_zones(db, wall_epoch(end, tz), t0 if step == 60 else None), bars, evs[0].price),
-                   boxes=_boxes([trade], bars, step, tz), mode=mode)
+    return _render(root, out_png, size=ZOOM, title=title, sub=sub, bars=bars, db=db, vwap=_vwap5(db, bars),
+                   markers=_markers(evs, bars, 300, review, tz), items=items, mode=ZOOM_MODE,
+                   zones=_zones(visible_zones(db, wall_epoch(end, tz)), bars, evs[0].price),
+                   boxes=_boxes([trade], bars, 300, tz))
+
+
+def render_lesson(root: Path, out_png: Path, *, day: str, db: DayBars, lesson: Lesson, k: int,
+                  events: list[Event], tz: str) -> Path:
+    """A teaching example on the same 5-minute chart: the bars it is about shaded, its key prices drawn."""
+    zone = ZoneInfo(tz)
+    d = datetime.fromisoformat(day).date()
+    at = lambda hm: wall_epoch(datetime.combine(d, time.fromisoformat(hm), zone), tz)
+    t0, t1 = sorted((at(lesson.start), at(lesson.end)))
+    bars = _window(db, t0, t1)
+    times = [b["time"] for b in bars]
+    lines = [{"name": lv.name, "price": lv.price, "color": "#7e57c2", "width": 2, "style": 0}
+             for lv in lesson.levels if bars and min(b["low"] for b in bars) <= lv.price <= max(b["high"] for b in bars)]
+    item = {"label": f"教学 {k}", "side": "lesson", "meta": f"<strong>{lesson.concept}</strong>{lesson.start}–{lesson.end}",
+            "tag": lesson.title, "comment": lesson.text}
+    return _render(root, out_png, size=ZOOM, title=f"今日教学 {k} · {lesson.title}",
+                   sub=f"{_date_label(day)} · {db.symbol} 5 分钟 · 紫色底色是讲解的这几根 K 线",
+                   bars=bars, db=db, vwap=_vwap5(db, bars), items=[item], mode="arrow",
+                   markers=_markers([e for e in events if e.symbol == db.symbol
+                                     and t0 <= wall_epoch(e.time, tz) < t1 + 300], bars, 300, None, tz),
+                   zones=_zones(visible_zones(db, t1 + 300), bars, (lesson.levels[0].price if lesson.levels
+                                                                    else bars[len(bars) // 2]["close"])),
+                   highlight={"t0": _snap(times, t0, 300), "t1": _snap(times, t1, 300)}, extra_levels=lines)

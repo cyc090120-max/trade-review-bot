@@ -16,12 +16,26 @@ class EventComment(BaseModel):
     hindsight: str = Field(default="", description="事后走势一句话，只作参考，不影响结论；没什么可说就留空")
 
 
+class LessonLevel(BaseModel):
+    name: str = Field(description="这个价位是什么，比如：被扫的前高、看跌 FVG 上沿、OB 下沿、CISD 位")
+    price: float = Field(description="价格")
+
+
+class Lesson(BaseModel):
+    symbol: str = Field(description="品种，MES 或 MNQ")
+    title: str = Field(description="标题，15 字以内")
+    concept: str = Field(description="涉及的概念，比如：流动性获取 + CISD + FVG")
+    start: str = Field(description="讲解的 K 线从几点开始，美东时间 HH:MM，比如 10:35")
+    end: str = Field(description="到几点结束，美东时间 HH:MM")
+    levels: list[LessonLevel] = Field(description="图上要画出来的关键价位，1–4 个")
+    text: str = Field(description="像老师讲课一样讲清楚：这几根 K 线发生了什么、为什么算这个概念、下次怎么识别、怎么利用。3–6 句")
+
+
 class Review(BaseModel):
     one_line: str = Field(description="一句话总结今天，20 字以内")
     market_context: str = Field(description="当天市场状态与关键位置，2-3 句")
-    playbook_fit: str = Field(description="打法是否匹配当天状态，2-3 句")
     events: list[EventComment] = Field(description="每一次出手/出场的点评，覆盖所有编号，按编号顺序")
-    lessons: list[str] = Field(default_factory=list, description="今日教学：从今天行情里挑 1–3 个 SMC / ICT 教科书式的例子（可以是我没做的），每条讲清楚在哪个时间价格、是什么概念、怎么识别、怎么利用")
+    lessons: list[Lesson] = Field(default_factory=list, description="今日教学：从今天行情里挑 1–3 个 SMC / ICT 教科书式的例子（可以是我没做的机会），每个会单独画成一张放大的 K 线图")
     chat_insights: list[str] = Field(description="与当天相关的群聊观点及印证/冲突，没有则为空列表")
     tomorrow: list[str] = Field(description="明日要点，最多 3 条，每条可直接执行")
 

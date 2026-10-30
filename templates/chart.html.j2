@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
-  :root{--bg:#131722;--panel:#1b1f2b;--line:#2a2e39;--text:#e1e3ea;--muted:#8b8fa0;
-        --up:#26a69a;--down:#ef5350;--good:#26a69a;--mid:#f0a73a;--bad:#ef5350}
+  :root{--bg:#ffffff;--panel:#f5f7fb;--line:#e0e3eb;--text:#131722;--muted:#787b86;
+        --up:#26a69a;--down:#ef5350;--good:#089981;--mid:#e08a00;--bad:#e53935}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);width:{{ width }}px;
        font-family:"PingFang SC","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif}
@@ -10,31 +10,33 @@
   .head h1{margin:0;font-size:28px;font-weight:600;line-height:1.35}
   .head .sub{color:var(--muted);font-size:18px;margin-top:4px;font-variant-numeric:tabular-nums}
   .head .sub b{font-weight:600}
-  .up{color:var(--up)} .down{color:var(--down)}
-  #wrap{position:relative;width:{{ width }}px;height:{{ chart_height }}px}
-  #chart{position:absolute;inset:0}
+  .up{color:var(--good)} .down{color:var(--bad)}
+  #wrap{position:relative;width:{{ width }}px;height:{{ chart_height }}px;background:var(--bg)}
+  /* zones and trade boxes sit behind the candles (the chart canvas is transparent), tags in front */
+  #bk{position:absolute;left:0;top:0;z-index:1}
+  #chart{position:absolute;inset:0;z-index:2}
   #ov{position:absolute;left:0;top:0;pointer-events:none;z-index:20}
-  #ov svg{position:absolute;left:0;top:0;overflow:visible}
+  #bk svg,#ov svg{position:absolute;left:0;top:0;overflow:visible}
   .list{padding:8px 24px 22px}
   .item{display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)}
-  .item .num{font-size:20px;font-weight:700;line-height:34px;flex:none;width:40px;height:34px;text-align:center;border-radius:6px;color:#fff}
-  .item .num.buy{background:#2962ff} .item .num.sell{background:#e53935}
+  .item .num{font-size:20px;font-weight:700;line-height:34px;flex:none;min-width:40px;height:34px;padding:0 6px;text-align:center;border-radius:6px;color:#fff}
+  .item .num.buy{background:#2962ff} .item .num.sell{background:#e53935} .item .num.lesson{background:#7e57c2}
   .item .meta{color:var(--muted);font-size:19px;font-variant-numeric:tabular-nums}
   .item .meta strong{color:var(--text);font-weight:600;margin-right:8px}
   .item .tag{font-size:23px;font-weight:600;margin:4px 0 2px}
-  .item .cm{font-size:21px;line-height:1.6}
+  .item .cm{font-size:21px;line-height:1.65}
   .item .after{font-size:18px;line-height:1.55;color:var(--muted);margin-top:6px}
   .v{display:inline-block;border-radius:5px;padding:0 8px;margin-right:8px;font-size:18px;font-weight:600;vertical-align:2px}
-  .v.good{background:rgba(38,166,154,.2);color:var(--good)}
-  .v.mid{background:rgba(240,167,58,.2);color:var(--mid)}
-  .v.bad{background:rgba(239,83,80,.2);color:var(--bad)}
+  .v.good{background:rgba(8,153,129,.12);color:var(--good)}
+  .v.mid{background:rgba(224,138,0,.14);color:var(--mid)}
+  .v.bad{background:rgba(229,57,53,.12);color:var(--bad)}
 </style></head>
 <body>
 <div class="head">
   <h1>{{ title }}</h1>
   <div class="sub">{{ sub|safe }}</div>
 </div>
-<div id="wrap"><div id="chart"></div><div id="ov"><svg id="svg"></svg></div></div>
+<div id="wrap"><div id="bk"><svg id="back"></svg></div><div id="chart"></div><div id="ov"><svg id="svg"></svg></div></div>
 
 {% if items %}
 <div class="list">
@@ -42,8 +44,8 @@
   <div class="item">
     <div class="num {{ it.side }}">{{ it.label }}</div>
     <div>
-      <div class="meta"><strong>{{ it.time }} {{ it.title }}</strong>{{ it.action }}</div>
-      <div class="tag"><span class="v {{ it.vclass }}">{{ it.verdict }}</span>{{ it.tag }}</div>
+      {% if it.meta %}<div class="meta">{{ it.meta|safe }}</div>{% endif %}
+      {% if it.tag %}<div class="tag">{% if it.verdict %}<span class="v {{ it.vclass }}">{{ it.verdict }}</span>{% endif %}{{ it.tag }}</div>{% endif %}
       <div class="cm">{{ it.comment }}</div>
       {% if it.hindsight %}<div class="after">事后：{{ it.hindsight }}</div>{% endif %}
     </div>
@@ -57,112 +59,115 @@
 const BARS = {{ bars_json|safe }};
 const VWAP = {{ vwap_json|safe }};
 const LEVELS = {{ levels_json|safe }};
-const SCALE_EXTRA = {{ scale_extra_json|safe }};
 const MARKERS = {{ markers_json|safe }};
 const ZONES = {{ zones_json|safe }};
 const TRADES = {{ trades_json|safe }};
+const HIGHLIGHT = {{ highlight_json|safe }};
 const MODE = '{{ mode }}';
 const W = {{ width }}, H = {{ chart_height }};
-const C = {bg:'#131722', grid:'#1e222d', text:'#d1d4dc', border:'#2a2e39', up:'#26a69a', down:'#ef5350',
-           buy:'#2962ff', sell:'#e53935', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350', vwap:'#e0e0e0'};
+const C = {grid:'#f0f3fa', text:'#131722', border:'#e0e3eb', up:'#26a69a', down:'#ef5350',
+           buy:'#2962ff', sell:'#e53935', good:'#089981', mid:'#e08a00', bad:'#e53935', vwap:'#9598a1'};
 const LC = LightweightCharts;
 
 const chart = LC.createChart(document.getElementById('chart'), {
   width: W, height: H,
-  layout: {background: {color: C.bg}, textColor: C.text, fontSize: 15},
+  layout: {background: {type: 'solid', color: 'rgba(0,0,0,0)'}, textColor: C.text, fontSize: 15},
   grid: {vertLines: {color: C.grid}, horzLines: {color: C.grid}},
   timeScale: {timeVisible: true, secondsVisible: false, borderColor: C.border, rightOffset: 2},
-  rightPriceScale: {borderColor: C.border, scaleMargins: {top: 0.1, bottom: 0.1}},
+  rightPriceScale: {borderColor: C.border, scaleMargins: {top: 0.06, bottom: 0.22}},
   crosshair: {vertLine: {visible: false}, horzLine: {visible: false}},
 });
+// candles like the trader's own chart: hollow green up, solid red down
 const series = chart.addSeries(LC.CandlestickSeries, {
-  upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down,
-  lastValueVisible: false, priceLineVisible: false,
-  autoscaleInfoProvider: (orig) => {
-    const r = orig();
-    if (!r) return r;
-    for (const p of SCALE_EXTRA) {
-      r.priceRange.minValue = Math.min(r.priceRange.minValue, p);
-      r.priceRange.maxValue = Math.max(r.priceRange.maxValue, p);
-    }
-    return r;
-  },
+  upColor: 'rgba(0,0,0,0)', downColor: C.down, borderVisible: true, borderUpColor: C.up, borderDownColor: C.down,
+  wickUpColor: C.up, wickDownColor: C.down, lastValueVisible: false, priceLineVisible: false,
 });
-series.setData(BARS);
+series.setData(BARS.map(b => ({time: b.time, open: b.open, high: b.high, low: b.low, close: b.close})));
+const vol = chart.addSeries(LC.HistogramSeries, {priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false});
+chart.priceScale('vol').applyOptions({scaleMargins: {top: 0.82, bottom: 0}});
+vol.setData(BARS.map(b => ({time: b.time, value: b.volume || 0,
+                            color: b.close >= b.open ? 'rgba(38,166,154,.45)' : 'rgba(239,83,80,.45)'})));
 if (VWAP.length) {
   const vw = chart.addSeries(LC.LineSeries, {color: C.vwap, lineWidth: 2, lineStyle: 0, lastValueVisible: false,
                                              priceLineVisible: false, crosshairMarkerVisible: false, title: 'VWAP'});
   vw.setData(VWAP);
 }
 for (const l of LEVELS) {
-  series.createPriceLine({price: l.price, color: l.color, lineWidth: l.width, lineStyle: 2, axisLabelVisible: true, title: l.name});
+  series.createPriceLine({price: l.price, color: l.color, lineWidth: l.width, lineStyle: l.style ?? 2, axisLabelVisible: true, title: l.name});
 }
 chart.timeScale().fitContent();
 
 function draw() {
   const paneW = W - chart.priceScale('right').width();
   const paneH = H - chart.timeScale().height();
-  const ov = document.getElementById('ov');
-  const svg = document.getElementById('svg');
-  ov.style.width = paneW + 'px'; ov.style.height = paneH + 'px';
-  svg.setAttribute('width', paneW); svg.setAttribute('height', paneH);
   const NS = 'http://www.w3.org/2000/svg';
-  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  const setup = (box, svgId) => {
+    const d = document.getElementById(box), s = document.getElementById(svgId);
+    d.style.width = paneW + 'px'; d.style.height = paneH + 'px';
+    s.setAttribute('width', paneW); s.setAttribute('height', paneH);
+    return (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); s.appendChild(e); return e; };
+  };
+  const back = setup('bk', 'back'), el = setup('ov', 'svg');
+  const X = (t) => chart.timeScale().timeToCoordinate(t), Y = (p) => series.priceToCoordinate(p);
 
-  // FVGs and gaps: translucent boxes from where they formed to the right edge
+  // teaching window: a light band over the bars the lesson is about
+  if (HIGHLIGHT) {
+    const x0 = X(HIGHLIGHT.t0), x1 = X(HIGHLIGHT.t1);
+    if (x0 !== null && x1 !== null) {
+      back('rect', {x: x0 - 6, y: 0, width: x1 - x0 + 12, height: paneH, fill: 'rgba(126,87,194,.09)'});
+    }
+  }
+
   // FVG / IFVG green-red, OB blue-orange, gaps purple; IFVG has a dashed outline
-  const ZC = {FVG: {bull: ['rgba(38,166,154,.16)', '#26a69a'], bear: ['rgba(239,83,80,.16)', '#ef5350']},
-              OB: {bull: ['rgba(41,98,255,.18)', '#5b8cff'], bear: ['rgba(255,152,0,.16)', '#ff9800']},
-              GAP: {gap: ['rgba(156,106,222,.16)', '#9c6ade']}};
+  const ZC = {FVG: {bull: ['rgba(38,166,154,.12)', '#26a69a'], bear: ['rgba(239,83,80,.11)', '#ef5350']},
+              OB: {bull: ['rgba(41,98,255,.11)', '#2962ff'], bear: ['rgba(255,152,0,.14)', '#f57c00']},
+              GAP: {gap: ['rgba(126,87,194,.10)', '#7e57c2']}};
   ZC.IFVG = ZC.FVG;
   const zoneLabels = [];
   for (const z of ZONES) {
     const zc = (ZC[z.type] || ZC.FVG)[z.kind] || ZC.GAP.gap;
-    const x0 = chart.timeScale().timeToCoordinate(z.start) ?? 0;
-    const y0 = series.priceToCoordinate(z.hi), y1 = series.priceToCoordinate(z.lo);
+    const x0 = X(z.start) ?? 0;
+    const y0 = Y(z.hi), y1 = Y(z.lo);
     if (y0 === null || y1 === null) continue;
     const top = Math.max(Math.min(y0, y1), 0), bottom = Math.min(Math.max(y0, y1), paneH);
     if (bottom - top < 1) continue;
-    el('rect', {x: x0, y: top, width: Math.max(paneW - x0, 0), height: bottom - top, fill: zc[0], stroke: zc[1], 'stroke-width': z.type === 'IFVG' ? 1.5 : 0.8, 'stroke-opacity': z.type === 'IFVG' ? 0.9 : 0.5, 'stroke-dasharray': z.type === 'IFVG' ? '6 4' : ''});
+    back('rect', {x: x0, y: top, width: Math.max(paneW - x0, 0), height: bottom - top, fill: zc[0], stroke: zc[1],
+                  'stroke-width': z.type === 'IFVG' ? 1.5 : 0.8, 'stroke-opacity': z.type === 'IFVG' ? 0.9 : 0.5,
+                  'stroke-dasharray': z.type === 'IFVG' ? '6 4' : ''});
     if (zoneLabels.some(p => Math.abs(p.y - top) < 18 && Math.abs(p.x - x0) < 220)) continue;  // would overlap
     zoneLabels.push({x: x0, y: top});
-    const lab = el('text', {x: x0 + 6, y: top + 15, fill: zc[1], 'font-size': 13, 'font-weight': 600});
+    const lab = back('text', {x: x0 + 6, y: top + 15, fill: zc[1], 'font-size': 13, 'font-weight': 600});
     lab.textContent = z.name;
   }
 
-  // trade boxes (box / both): from entry to exit, between entry and exit price, green = profit, red = loss
+  // trade boxes: from entry to exit, between entry and exit price, green = profit, red = loss
   if (MODE !== 'arrow') {
     for (const t of TRADES) {
-      const x0 = chart.timeScale().timeToCoordinate(t.t0), x1 = chart.timeScale().timeToCoordinate(t.t1);
-      const y0 = series.priceToCoordinate(t.p0), y1 = series.priceToCoordinate(t.p1);
+      const x0 = X(t.t0), x1 = X(t.t1), y0 = Y(t.p0), y1 = Y(t.p1);
       if (x0 === null || x1 === null || y0 === null || y1 === null) continue;
-      const col = t.pnl >= 0 ? ['rgba(38,166,154,.22)', '#26a69a'] : ['rgba(239,83,80,.22)', '#ef5350'];
-      const w = Math.max(x1 - x0, 6);
-      el('rect', {x: x0, y: Math.min(y0, y1), width: w, height: Math.max(Math.abs(y1 - y0), 2), fill: col[0], stroke: col[1], 'stroke-width': 1.5});
-      el('line', {x1: x0, y1: y0, x2: x0 + w, y2: y1, stroke: col[1], 'stroke-width': 2, 'stroke-dasharray': '5 4'});
-      const lab = el('text', {x: x0 + w / 2, y: Math.min(y0, y1) - 6, 'text-anchor': 'middle', fill: col[1], 'font-size': 15, 'font-weight': 700});
+      const col = t.pnl >= 0 ? ['rgba(8,153,129,.13)', '#089981'] : ['rgba(229,57,53,.12)', '#e53935'];
+      const w = Math.max(x1 - x0, 8);
+      back('rect', {x: x0 - 4, y: Math.min(y0, y1), width: w + 8, height: Math.max(Math.abs(y1 - y0), 2), fill: col[0], stroke: col[1], 'stroke-width': 1.5});
+      back('line', {x1: x0, y1: y0, x2: x0 + w, y2: y1, stroke: col[1], 'stroke-width': 2, 'stroke-dasharray': '5 4'});
+      const lab = el('text', {x: x0 + w / 2, y: Math.min(y0, y1) - 8, 'text-anchor': 'middle', fill: col[1], 'font-size': 15, 'font-weight': 700,
+                              stroke: '#fff', 'stroke-width': 4, 'paint-order': 'stroke'});
       lab.textContent = t.label;
     }
   }
 
   // each fill: a dot at the exact price, plus a 买 / 卖 tag with an arrow (sells above the candle, buys below)
   const placed = [];
-  const top = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.high) : null; };
-  const bot = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.low) : null; };
+  const bar = (t) => BARS.find(b => b.time === t);
   const BW = 46, BH = 26;
   const free = (x, y) => placed.every(p => Math.abs(p.x - x) > BW + 2 || Math.abs(p.y - y) > BH + 2) && y > BH && y < paneH - BH;
   for (const m of MARKERS) {
-    const x = chart.timeScale().timeToCoordinate(m.bar_time), y = series.priceToCoordinate(m.price);
+    const x = X(m.bar_time), y = Y(m.price);
     if (x === null || y === null) continue;
     const side = m.is_buy ? C.buy : C.sell;
-    el('circle', {cx: x, cy: y, r: 5.5, fill: side, stroke: '#fff', 'stroke-width': 1.5});
-    if (MODE === 'box') {  // box mode: a small 买 / 卖 next to the dot only
-      const t = el('text', {x: x + 9, y: y + 5, fill: side, 'font-size': 15, 'font-weight': 700});
-      t.textContent = m.side_text;
-      continue;
-    }
+    el('circle', {cx: x, cy: y, r: 5, fill: side, stroke: '#fff', 'stroke-width': 1.5});
     let dir = m.is_buy ? 1 : -1;
-    const edge = (d) => d < 0 ? Math.min(top(m.bar_time) ?? y, y) : Math.max(bot(m.bar_time) ?? y, y);
+    const b = bar(m.bar_time);
+    const edge = (d) => d < 0 ? Math.min(b ? Y(b.high) : y, y) : Math.max(b ? Y(b.low) : y, y);
     let by = null, bx = x;
     for (const d of [dir, -dir]) {
       for (let k = 0; k < 10 && by === null; k++) {
@@ -173,12 +178,13 @@ function draw() {
     }
     if (by === null) by = Math.min(Math.max(y + dir * 40, BH), paneH - BH);
     placed.push({x: bx, y: by});
-    const ring = m.verdict_class ? C[m.verdict_class] : '#ffffff';
-    // arrow from the tag to the candle
     const ty = by - dir * (BH / 2);
     el('line', {x1: bx, y1: ty, x2: x, y2: y, stroke: side, 'stroke-width': 1.5, 'stroke-dasharray': '3 3'});
-    const tip = dir > 0 ? `${x - 7},${ty - 2} ${x + 7},${ty - 2} ${x},${ty - 11}` : `${x - 7},${ty + 2} ${x + 7},${ty + 2} ${x},${ty + 11}`;
-    if (bx === x) el('polygon', {points: tip, fill: side});
+    if (bx === x) {
+      const tip = dir > 0 ? `${x - 7},${ty - 2} ${x + 7},${ty - 2} ${x},${ty - 11}` : `${x - 7},${ty + 2} ${x + 7},${ty + 2} ${x},${ty + 11}`;
+      el('polygon', {points: tip, fill: side});
+    }
+    const ring = m.verdict_class ? C[m.verdict_class] : '#ffffff';
     el('rect', {x: bx - BW / 2, y: by - BH / 2, width: BW, height: BH, rx: 6, fill: side, stroke: ring, 'stroke-width': m.verdict_class ? 3 : 1});
     const t = el('text', {x: bx, y: by + 6, 'text-anchor': 'middle', fill: '#fff', 'font-size': 16, 'font-weight': 700});
     t.textContent = m.side_text + m.qty;

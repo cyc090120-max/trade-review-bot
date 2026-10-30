@@ -17,7 +17,8 @@
   #ov svg{position:absolute;left:0;top:0;overflow:visible}
   .list{padding:8px 24px 22px}
   .item{display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)}
-  .item .num{font-size:28px;line-height:1.3;flex:none;width:34px}
+  .item .num{font-size:20px;font-weight:700;line-height:34px;flex:none;width:40px;height:34px;text-align:center;border-radius:6px;color:#fff}
+  .item .num.buy{background:#2962ff} .item .num.sell{background:#e53935}
   .item .meta{color:var(--muted);font-size:19px;font-variant-numeric:tabular-nums}
   .item .meta strong{color:var(--text);font-weight:600;margin-right:8px}
   .item .tag{font-size:23px;font-weight:600;margin:4px 0 2px}
@@ -39,7 +40,7 @@
 <div class="list">
   {% for it in items %}
   <div class="item">
-    <div class="num">{{ it.label }}</div>
+    <div class="num {{ it.side }}">{{ it.label }}</div>
     <div>
       <div class="meta"><strong>{{ it.time }} {{ it.title }}</strong>{{ it.action }}</div>
       <div class="tag"><span class="v {{ it.vclass }}">{{ it.verdict }}</span>{{ it.tag }}</div>
@@ -59,9 +60,11 @@ const LEVELS = {{ levels_json|safe }};
 const SCALE_EXTRA = {{ scale_extra_json|safe }};
 const MARKERS = {{ markers_json|safe }};
 const ZONES = {{ zones_json|safe }};
+const TRADES = {{ trades_json|safe }};
+const MODE = '{{ mode }}';
 const W = {{ width }}, H = {{ chart_height }};
 const C = {bg:'#131722', grid:'#1e222d', text:'#d1d4dc', border:'#2a2e39', up:'#26a69a', down:'#ef5350',
-           buy:'#2962ff', sell:'#ff9800', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350', vwap:'#e0e0e0'};
+           buy:'#2962ff', sell:'#e53935', good:'#26a69a', mid:'#f0a73a', bad:'#ef5350', vwap:'#e0e0e0'};
 const LC = LightweightCharts;
 
 const chart = LC.createChart(document.getElementById('chart'), {
@@ -127,38 +130,58 @@ function draw() {
     lab.textContent = z.name;
   }
 
-  // each fill: a dot at the exact price, a numbered badge just above (sells) or below (buys) its candle
+  // trade boxes (box / both): from entry to exit, between entry and exit price, green = profit, red = loss
+  if (MODE !== 'arrow') {
+    for (const t of TRADES) {
+      const x0 = chart.timeScale().timeToCoordinate(t.t0), x1 = chart.timeScale().timeToCoordinate(t.t1);
+      const y0 = series.priceToCoordinate(t.p0), y1 = series.priceToCoordinate(t.p1);
+      if (x0 === null || x1 === null || y0 === null || y1 === null) continue;
+      const col = t.pnl >= 0 ? ['rgba(38,166,154,.22)', '#26a69a'] : ['rgba(239,83,80,.22)', '#ef5350'];
+      const w = Math.max(x1 - x0, 6);
+      el('rect', {x: x0, y: Math.min(y0, y1), width: w, height: Math.max(Math.abs(y1 - y0), 2), fill: col[0], stroke: col[1], 'stroke-width': 1.5});
+      el('line', {x1: x0, y1: y0, x2: x0 + w, y2: y1, stroke: col[1], 'stroke-width': 2, 'stroke-dasharray': '5 4'});
+      const lab = el('text', {x: x0 + w / 2, y: Math.min(y0, y1) - 6, 'text-anchor': 'middle', fill: col[1], 'font-size': 15, 'font-weight': 700});
+      lab.textContent = t.label;
+    }
+  }
+
+  // each fill: a dot at the exact price, plus a 买 / 卖 tag with an arrow (sells above the candle, buys below)
   const placed = [];
-  const R = 15;
-  const free = (x, y) => placed.every(p => Math.hypot(p.x - x, p.y - y) > 2 * R + 3) && y > R + 2 && y < paneH - R - 2;
   const top = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.high) : null; };
   const bot = (t) => { const b = BARS.find(b => b.time === t); return b ? series.priceToCoordinate(b.low) : null; };
+  const BW = 46, BH = 26;
+  const free = (x, y) => placed.every(p => Math.abs(p.x - x) > BW + 2 || Math.abs(p.y - y) > BH + 2) && y > BH && y < paneH - BH;
   for (const m of MARKERS) {
     const x = chart.timeScale().timeToCoordinate(m.bar_time), y = series.priceToCoordinate(m.price);
     if (x === null || y === null) continue;
-    placed.push({x, y});
-  }
-  for (const m of MARKERS) {
-    const x = chart.timeScale().timeToCoordinate(m.bar_time), y = series.priceToCoordinate(m.price);
-    if (x === null || y === null) continue;
-    const color = m.verdict_class ? C[m.verdict_class] : (m.is_buy ? C.buy : C.sell);
+    const side = m.is_buy ? C.buy : C.sell;
+    el('circle', {cx: x, cy: y, r: 5.5, fill: side, stroke: '#fff', 'stroke-width': 1.5});
+    if (MODE === 'box') {  // box mode: a small 买 / 卖 next to the dot only
+      const t = el('text', {x: x + 9, y: y + 5, fill: side, 'font-size': 15, 'font-weight': 700});
+      t.textContent = m.side_text;
+      continue;
+    }
     let dir = m.is_buy ? 1 : -1;
     const edge = (d) => d < 0 ? Math.min(top(m.bar_time) ?? y, y) : Math.max(bot(m.bar_time) ?? y, y);
     let by = null, bx = x;
     for (const d of [dir, -dir]) {
       for (let k = 0; k < 10 && by === null; k++) {
-        const cy = edge(d) + d * (R + 14 + k * (2 * R + 4));
-        for (const dx of [0, -R * 1.6, R * 1.6]) if (by === null && free(x + dx, cy)) { by = cy; bx = x + dx; dir = d; }
+        const cy = edge(d) + d * (BH / 2 + 18 + k * (BH + 4));
+        for (const dx of [0, -BW - 4, BW + 4]) if (by === null && free(x + dx, cy)) { by = cy; bx = x + dx; dir = d; }
       }
       if (by !== null) break;
     }
-    if (by === null) { by = Math.min(Math.max(y + dir * 40, R + 2), paneH - R - 2); }
+    if (by === null) by = Math.min(Math.max(y + dir * 40, BH), paneH - BH);
     placed.push({x: bx, y: by});
-    el('line', {x1: bx, y1: by - dir * R, x2: x, y2: y, stroke: color, 'stroke-width': 2, 'stroke-dasharray': '3 3'});
-    el('circle', {cx: x, cy: y, r: 5.5, fill: m.is_buy ? C.buy : C.sell, stroke: '#fff', 'stroke-width': 1.5});
-    el('circle', {cx: bx, cy: by, r: R, fill: '#131722', stroke: color, 'stroke-width': 2.5});
-    const t = el('text', {x: bx, y: by + 6, 'text-anchor': 'middle', fill: '#fff', 'font-size': 17, 'font-weight': 700});
-    t.textContent = m.n;
+    const ring = m.verdict_class ? C[m.verdict_class] : '#ffffff';
+    // arrow from the tag to the candle
+    const ty = by - dir * (BH / 2);
+    el('line', {x1: bx, y1: ty, x2: x, y2: y, stroke: side, 'stroke-width': 1.5, 'stroke-dasharray': '3 3'});
+    const tip = dir > 0 ? `${x - 7},${ty - 2} ${x + 7},${ty - 2} ${x},${ty - 11}` : `${x - 7},${ty + 2} ${x + 7},${ty + 2} ${x},${ty + 11}`;
+    if (bx === x) el('polygon', {points: tip, fill: side});
+    el('rect', {x: bx - BW / 2, y: by - BH / 2, width: BW, height: BH, rx: 6, fill: side, stroke: ring, 'stroke-width': m.verdict_class ? 3 : 1});
+    const t = el('text', {x: bx, y: by + 6, 'text-anchor': 'middle', fill: '#fff', 'font-size': 16, 'font-weight': 700});
+    t.textContent = m.side_text + m.qty;
   }
   window.__ready = true;
 }

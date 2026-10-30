@@ -27,6 +27,9 @@ LEVEL_RANK = [("前周", 0), ("前日", 1), ("隔夜", 2), ("日线", 2), ("4H",
               ("1H", 4), ("等高", 4), ("等低", 4), ("SPX", 5), ("NDX", 5), ("整数", 5), ("15m", 6)]
 HTF_LEVELS = ("前周", "前日", "隔夜", "日线", "4H", "1H")
 MAX_LEVELS, MAX_ZONES = 7, 3
+# fills: "arrow" = 买/卖 tags with arrows, "box" = one green/red box per trade, "both". Boxes overlap on a
+# busy day, so the overview uses arrows only and each trade close-up gets both.
+OVERVIEW_MODE, TRADE_MODE = "arrow", "both"
 
 
 def _rank(name: str) -> float:
@@ -79,6 +82,22 @@ def _zones(zones: list[dict], bars: list[dict], ref: float, tfs: tuple[str, ...]
     return [z for _, z in sorted(cands, key=lambda x: x[0])[:MAX_ZONES]]
 
 
+def _boxes(trades: list[Trade], bars: list[dict], step: int, tz: str) -> list[dict]:
+    """One box per closed trade: entry time/avg price to exit time/avg price."""
+    times = [b["time"] for b in bars]
+    snap = lambda t: min(times, key=lambda x: abs(x - (t - t % step)))
+    out = []
+    for t in trades:
+        if t.is_open:
+            continue
+        t0, t1 = wall_epoch(t.entry_time, tz), wall_epoch(t.exit_time, tz)
+        if t1 < times[0] or t0 > times[-1] + step:
+            continue
+        out.append({"t0": snap(t0), "t1": snap(t1), "p0": t.entry_avg, "p1": t.exit_avg, "pnl": t.pnl_usd,
+                    "label": f"第{t.n}笔 {t.points_per_contract:+.2f}"})
+    return out
+
+
 def _markers(events: list[Event], bars: list[dict], step: int, review: Review | None, tz: str) -> list[dict]:
     comments = {c.n: c for c in (review.events if review else [])}
     times = [b["time"] for b in bars]
@@ -89,7 +108,7 @@ def _markers(events: list[Event], bars: list[dict], step: int, review: Review | 
         if not times or t < times[0] - step or t > times[-1] + step:
             continue
         c = comments.get(e.n)
-        out.append({"n": e.n, "is_buy": e.is_buy, "price": e.price,
+        out.append({"n": e.n, "is_buy": e.is_buy, "price": e.price, "side_text": "买" if e.is_buy else "卖", "qty": e.qty,
                     "bar_time": t if t in times else min(times, key=lambda x: abs(x - t)),
                     "verdict_class": VCLASS[verdict_class(c.verdict)] if c else ""})
     return out
@@ -97,7 +116,8 @@ def _markers(events: list[Event], bars: list[dict], step: int, review: Review | 
 
 def _render(root: Path, out_png: Path, *, width: int, chart_height: int, title: str, sub: str,
             bars: list[dict], db: DayBars, vwap: list[dict], markers: list[dict], items: list[dict],
-            zones: list[dict], level_kinds: tuple[str, ...] | None = None) -> Path:
+            zones: list[dict], level_kinds: tuple[str, ...] | None = None, boxes: list[dict] | None = None,
+            mode: str = OVERVIEW_MODE) -> Path:
     from playwright.sync_api import sync_playwright
 
     levels, extra = _levels(db, bars, level_kinds)
@@ -107,7 +127,8 @@ def _render(root: Path, out_png: Path, *, width: int, chart_height: int, title: 
         lib_uri=(root / "reviewbot/vendor/lightweight-charts.standalone.production.js").as_uri(),
         bars_json=json.dumps(bars), vwap_json=json.dumps(vwap), levels_json=json.dumps(levels, ensure_ascii=False),
         scale_extra_json=json.dumps(extra), markers_json=json.dumps(markers),
-        zones_json=json.dumps(zones, ensure_ascii=False),
+        zones_json=json.dumps(zones, ensure_ascii=False), trades_json=json.dumps(boxes or [], ensure_ascii=False),
+        mode=mode,
     )
     out_png.parent.mkdir(parents=True, exist_ok=True)
     out_png = out_png.resolve()
@@ -132,7 +153,7 @@ def _pnl(usd: float) -> str:
 
 
 def render_overview(root: Path, out_png: Path, *, day: str, db: DayBars, events: list[Event],
-                    trades: list[Trade], tz: str) -> Path:
+                    trades: list[Trade], tz: str, mode: str = OVERVIEW_MODE) -> Path:
     closed = [t for t in trades if t.symbol == db.symbol and not t.is_open]
     sub = (f"{_date_label(day)} · 盘中 09:30–16:00 ET · 白线 VWAP · 绿红 FVG · 蓝橙 OB · 紫色缺口 · "
            f"{len(closed)} 笔合计 {_pnl(sum(t.pnl_usd for t in closed))} 美元")
@@ -141,7 +162,8 @@ def render_overview(root: Path, out_png: Path, *, day: str, db: DayBars, events:
     return _render(root, out_png, width=1200, chart_height=640, title=f"{db.symbol} 全天 5 分钟", sub=sub,
                    bars=db.bars, db=db, vwap=vwap5,
                    markers=_markers([e for e in events if e.symbol == db.symbol], db.bars, 300, None, tz), items=[],
-                   zones=_zones(db.zones, db.bars, db.bars[0]["open"]))
+                   zones=_zones(db.zones, db.bars, db.bars[0]["open"]),
+                   boxes=_boxes([t for t in trades if t.symbol == db.symbol], db.bars, 300, tz), mode=mode)
 
 
 def render_htf(root: Path, out_png: Path, *, day: str, db: DayBars) -> Path:
@@ -152,7 +174,7 @@ def render_htf(root: Path, out_png: Path, *, day: str, db: DayBars) -> Path:
 
 
 def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Trade, events: list[Event],
-                 review: Review | None, tz: str) -> Path:
+                 review: Review | None, tz: str, mode: str = TRADE_MODE) -> Path:
     zone = ZoneInfo(tz)
     evs = [e for e in events if e.trade_n == trade.n]
     end = trade.exit_time or evs[-1].time
@@ -176,10 +198,11 @@ def render_trade(root: Path, out_png: Path, *, day: str, db: DayBars, trade: Tra
     for e in evs:
         c = comments.get(e.n)
         if c:
-            items.append({"label": e.label, "time": e.time.astimezone(zone).strftime("%H:%M:%S"), "title": e.title,
+            items.append({"label": "买" if e.is_buy else "卖", "side": "buy" if e.is_buy else "sell", "time": e.time.astimezone(zone).strftime("%H:%M:%S"), "title": e.title,
                           "action": f"{'买' if e.is_buy else '卖'}{e.qty} @ {e.price:,.2f}",
                           "verdict": c.verdict, "vclass": VCLASS[verdict_class(c.verdict)], "tag": c.tag,
                           "comment": c.comment, "hindsight": c.hindsight})
     return _render(root, out_png, width=900, chart_height=520, title=title, sub=sub, bars=bars, db=db, vwap=vwap,
                    markers=_markers(evs, bars, step, review, tz), items=items,
-                   zones=_zones(visible_zones(db, wall_epoch(end, tz), t0 if step == 60 else None), bars, evs[0].price))
+                   zones=_zones(visible_zones(db, wall_epoch(end, tz), t0 if step == 60 else None), bars, evs[0].price),
+                   boxes=_boxes([trade], bars, step, tz), mode=mode)

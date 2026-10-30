@@ -69,6 +69,8 @@ def track(z: dict, later: list[dict]) -> dict | None:
             z["state"] = "已回踩"
         if (b["low"] <= ce if bull else b["high"] >= ce) and z["type"] == "FVG":
             z["state"] = "已回补到 CE"
+    if z["type"] != "GAP":
+        z["name"] = label(z)   # an FVG that flipped is now named as the IFVG it became
     return z
 
 

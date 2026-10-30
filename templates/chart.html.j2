@@ -112,6 +112,7 @@ function draw() {
               OB: {bull: ['rgba(41,98,255,.18)', '#5b8cff'], bear: ['rgba(255,152,0,.16)', '#ff9800']},
               GAP: {gap: ['rgba(156,106,222,.16)', '#9c6ade']}};
   ZC.IFVG = ZC.FVG;
+  const zoneLabels = [];
   for (const z of ZONES) {
     const zc = (ZC[z.type] || ZC.FVG)[z.kind] || ZC.GAP.gap;
     const x0 = chart.timeScale().timeToCoordinate(z.start) ?? 0;
@@ -120,6 +121,8 @@ function draw() {
     const top = Math.max(Math.min(y0, y1), 0), bottom = Math.min(Math.max(y0, y1), paneH);
     if (bottom - top < 1) continue;
     el('rect', {x: x0, y: top, width: Math.max(paneW - x0, 0), height: bottom - top, fill: zc[0], stroke: zc[1], 'stroke-width': z.type === 'IFVG' ? 1.5 : 0.8, 'stroke-opacity': z.type === 'IFVG' ? 0.9 : 0.5, 'stroke-dasharray': z.type === 'IFVG' ? '6 4' : ''});
+    if (zoneLabels.some(p => Math.abs(p.y - top) < 18 && Math.abs(p.x - x0) < 220)) continue;  // would overlap
+    zoneLabels.push({x: x0, y: top});
     const lab = el('text', {x: x0 + 6, y: top + 15, fill: zc[1], 'font-size': 13, 'font-weight': 600});
     lab.textContent = z.name;
   }
